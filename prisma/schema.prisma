@@ -23,6 +23,7 @@ model User {
   createdAt DateTime @default(now())
 
   authProviders UserAuthProvider[]
+  refreshTokens RefreshToken[]
   memberships Membership[]
   ownedResidences Residence[] @relation("ResidenceOwner")
   invitesReceived Invite[] @relation("InviteRecipient")
@@ -44,6 +45,24 @@ model UserAuthProvider {
   @@unique([provider, providerId])
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+}
+
+//Refresh token de sessão (rotação + detecção de reuso). O token em si nunca é
+//guardado em texto puro — só o hash. familyId agrupa toda a cadeia de rotação de
+//um mesmo login: se um token já usado (revokedAt setado) for apresentado de novo,
+//é sinal de roubo, e a família inteira é revogada (força novo login).
+model RefreshToken {
+  id Int @id @default(autoincrement())
+  userId Int
+  tokenHash String @unique
+  familyId String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([familyId])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 model Residence {
   id Int @id @default(autoincrement())

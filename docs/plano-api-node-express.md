@@ -73,6 +73,7 @@ alternativa de corte, não como algo em avaliação agora.
 | :---- | :---- | :---- |
 | `loginAction` | `POST /auth/login` | exceção — ver nota acima |
 | `registerAction` | `POST /auth/register` | exceção — ver nota acima |
+| *(novo, seção 5.1)* | `POST /auth/refresh` | exceção — ver nota acima; troca refresh token por um par novo |
 | `changePasswordAction` | `PATCH /users/me/password` | já era substantivo, mantido |
 | `logoutAction` | `POST /auth/logout` | exceção — ver nota acima |
 
@@ -229,9 +230,10 @@ objetivo desta fase.
 **Opção B — JWT + Passport.js na mão (recomendado para o objetivo de aprendizado).**
 - Login com credenciais: reaproveita a comparação com `bcrypt` (já usada no projeto atual) +
   emite um JWT assinado (`jsonwebtoken`) guardado em cookie `httpOnly`.
-- Login com Google: `passport-google-oauth20` implementa o fluxo OAuth2 (authorization code) —
-  mesmo fluxo conceitual que o `GoogleProvider` do NextAuth já usa hoje, só que explícito em vez
-  de abstraído.
+- Login com Google: `passport-google-oidc` implementa o fluxo OpenID Connect (o `passport-google-oauth20"`
+  citado numa versão anterior deste documento está sem atualização há 7 anos — trocado pela
+  estratégia atual recomendada pelo próprio passportjs.org) — mesmo fluxo conceitual que o
+  `GoogleProvider` do NextAuth já usa hoje, só que explícito em vez de abstraído.
 - Middleware de rota protegida: substitui o `src/proxy.ts` atual — decodifica o JWT do cookie/
   header `Authorization`, popula `req.user`, retorna 401 se inválido/ausente.
 - **Ponto de atenção real:** as permissões por papel (owner vs. membro comum) já existem hoje
@@ -241,6 +243,36 @@ objetivo desta fase.
 Opção B foi a escolhida (é o cerne do aprendizado e dos cursos de JWT recomendados na seção 8) — a
 Opção A (`@auth/express`) fica registrada aqui só como plano de contingência, caso o tempo aperte e
 a prioridade vire "ter a API funcionando" em vez de "aprender auth em Node".
+
+### 5.1 Expiração do access token + refresh token (adicionado em 2026-08-07)
+
+**Decisão:** access token (JWT) de vida curta — **15 minutos** — combinado com um **refresh token
+opaco, rotativo e revogável**, guardado com hash numa tabela própria (`RefreshToken`). Pesquisado
+contra a recomendação atual (RFC 9700 — OAuth 2.0 Security Best Current Practice, e OAuth 2.1):
+
+- **Por que não só um JWT de vida longa:** um JWT é stateless por definição — não dá pra revogar
+  antes da expiração (não existe "apagar" um JWT já emitido, só esperar expirar). Um access token
+  de 15 min limita bem o estrago se vazar.
+- **Por que o refresh token não é outro JWT:** ele não precisa carregar claim nenhuma — só
+  identifica uma sessão que o banco valida a cada uso. Sendo opaco (valor aleatório, 40 bytes), não
+  há por que ser auto-contido; o banco é sempre a fonte de verdade sobre validade/revogação.
+- **Rotação (one-time use):** cada `POST /auth/refresh` consome o refresh token atual e emite um
+  novo — nunca reaproveitável.
+- **Detecção de reuso:** se um refresh token **já usado** (revogado) for apresentado de novo, é
+  sinal de token roubado — a família inteira daquela sessão é revogada, forçando novo login. Isso é
+  o que a rotação sem detecção de reuso não pega sozinha.
+- **Nunca texto puro no banco:** só o hash (SHA-256) do refresh token é armazenado — igual senha,
+  mas sem custo de bcrypt (já é aleatório de alta entropia, não escolhido por humano).
+- **Cookies diferentes, propriedades diferentes:** `JWT` (access token) com `path: '/'`,
+  `sameSite: 'lax'`, 15 min. `refreshToken` com `path: '/auth'` (só é enviado pras próprias rotas
+  de auth, nunca pro resto da API), `sameSite: 'strict'`, 7 dias (`REFRESH_TOKEN_EXPIRES_IN`).
+- **Logout revoga de verdade:** não é só limpar cookie — o refresh token correspondente é marcado
+  revogado no banco, então não pode ser reaproveitado mesmo que alguém tenha capturado o valor
+  antes do logout.
+
+Fontes: RFC 9700 (OAuth 2.0 Security BCP) e OAuth 2.1 recomendam rotação de refresh token com
+detecção de reuso como alternativa a sender-constraining (mTLS/DPoP); OWASP e a maioria das
+implementações de referência tratam refresh token como valor opaco, não JWT.
 
 ## 6. Fases de implementação (incrementais, escopo B)
 
