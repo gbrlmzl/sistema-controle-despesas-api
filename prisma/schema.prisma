@@ -1,0 +1,198 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id Int @id @default(autoincrement())
+  name String
+  email String @unique
+  username String? @unique //identificador público, usado para convidar o usuário para uma residência
+  password String?
+  profilePic String?
+  createdAt DateTime @default(now())
+
+  authProviders UserAuthProvider[]
+  memberships Membership[]
+  ownedResidences Residence[] @relation("ResidenceOwner")
+  invitesReceived Invite[] @relation("InviteRecipient")
+  invitesSent Invite[] @relation("InviteSender")
+  joinRequests JoinRequest[]
+  notifications Notification[]
+  joinAttempts JoinAttempt[]
+  expenses Expense[]
+  monthClosures MonthClosure[]
+}
+
+model UserAuthProvider {
+  id Int @id @default(autoincrement())
+  userId Int
+  provider String
+  providerId String
+  createdAt DateTime @default(now())
+
+  @@unique([provider, providerId])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+}
+model Residence {
+  id Int @id @default(autoincrement())
+  name String
+  code String @unique //código curto e público, usado para solicitar entrada na residência
+  ownerId Int
+  createdAt DateTime @default(now())
+  archivedAt DateTime? //residência arquivada fica somente leitura (RN-032)
+
+  owner User @relation("ResidenceOwner", fields: [ownerId], references: [id])
+  members Membership[]
+  invites Invite[]
+  joinRequests JoinRequest[]
+  expenses Expense[]
+  monthClosures MonthClosure[]
+}
+
+model Membership {
+  id Int @id @default(autoincrement())
+  userId Int
+  residenceId Int
+  role MembershipRole @default(MEMBER)
+  joinedAt DateTime @default(now())
+
+  @@unique([userId, residenceId])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  residence Residence @relation(fields: [residenceId], references: [id], onDelete: Cascade)
+}
+
+enum MembershipRole {
+  OWNER
+  MEMBER
+}
+
+//Convite enviado pelo owner para um usuário entrar na residência (fluxo de dentro para fora)
+model Invite {
+  id Int @id @default(autoincrement())
+  residenceId Int
+  invitedUserId Int
+  invitedById Int
+  status AccessStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  expiresAt DateTime //RN-015: convite expira em 7 dias
+  respondedAt DateTime?
+
+  residence Residence @relation(fields: [residenceId], references: [id], onDelete: Cascade)
+  invitedUser User @relation("InviteRecipient", fields: [invitedUserId], references: [id], onDelete: Cascade)
+  invitedBy User @relation("InviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+}
+
+//Solicitação enviada por um usuário que digitou o código (fluxo de fora para dentro)
+model JoinRequest {
+  id Int @id @default(autoincrement())
+  residenceId Int
+  requesterId Int
+  status AccessStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  respondedAt DateTime?
+
+  residence Residence @relation(fields: [residenceId], references: [id], onDelete: Cascade)
+  requester User @relation(fields: [requesterId], references: [id], onDelete: Cascade)
+}
+
+enum AccessStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+//RN-037 -> Notificação genérica: qualquer área do sistema publica aqui.
+//title, message e linkTo são resolvidos por quem cria, para que a leitura não
+//precise conhecer as regras de cada tipo.
+model Notification {
+  id Int @id @default(autoincrement())
+  userId Int
+  type NotificationType
+  title String
+  message String
+  linkTo String?
+  readAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum NotificationType {
+  INVITE_RECEIVED
+  JOIN_REQUEST_RECEIVED
+  JOIN_REQUEST_ACCEPTED
+  JOIN_REQUEST_DECLINED
+  MEMBER_REMOVED
+  OWNERSHIP_TRANSFERRED
+  MONTH_CLOSED
+}
+
+//RN-052 -> Contador de tentativas de entrada por código, guardado no banco para
+//sobreviver a reinício do processo e funcionar com mais de uma instância da aplicação.
+model JoinAttempt {
+  id Int @id @default(autoincrement())
+  userId Int
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+//Despesa lançada por um membro dentro de uma residência, numa competência (mês/ano).
+//valueInCents guarda o valor em centavos: dinheiro em ponto flutuante acumula erro
+//de arredondamento na soma, e o rateio futuro (FEAT-029) depende de totais exatos.
+model Expense {
+  id String @id @default(uuid())
+  name String
+  valueInCents Int
+  category ExpenseCategory
+  month Int
+  year Int
+  residenceId Int
+  createdById Int
+  isRecurring Boolean @default(false) //FEAT-025: repetida na competência seguinte ao fechar o mês
+  createdAt DateTime @default(now())
+  deletedAt DateTime?
+
+  @@index([residenceId, year, month])
+  residence Residence @relation(fields: [residenceId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+}
+
+enum ExpenseCategory {
+  ALIMENTACAO
+  DOMESTICAS
+  ASSINATURAS
+  LAZER
+  OUTROS
+}
+
+//Fechamento da conta do mês, feito pelo owner. Uma competência fechada fica
+//somente leitura, e a competência aberta passa a ser a seguinte (RN-020).
+model MonthClosure {
+  id Int @id @default(autoincrement())
+  residenceId Int
+  month Int
+  year Int
+  closedById Int
+  closedAt DateTime @default(now())
+
+  @@unique([residenceId, year, month])
+  residence Residence @relation(fields: [residenceId], references: [id], onDelete: Cascade)
+  closedBy User @relation(fields: [closedById], references: [id])
+}
