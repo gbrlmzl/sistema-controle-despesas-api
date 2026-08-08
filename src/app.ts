@@ -9,6 +9,8 @@ import authRoutes from './modules/auth/auth.routes.js';
 import residencesRoutes from './modules/residences/residences.routes.js';
 import expensesRoutes from './modules/expenses/expenses.routes.js';
 import reportsRoutes from './modules/reports/reports.routes.js';
+import notificationsRoutes from './modules/notifications/notifications.routes.js';
+import usersRoutes from './modules/users/users.routes.js';
 
 const app = express();
 
@@ -40,6 +42,8 @@ app.use('/auth', authRoutes);
 app.use('/residences', residencesRoutes);
 app.use('/residences', expensesRoutes);
 app.use('/residences', reportsRoutes);
+app.use('/notifications', notificationsRoutes);
+app.use('/users', usersRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
