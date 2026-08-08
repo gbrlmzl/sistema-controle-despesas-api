@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 import prisma from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
-import type { AuthUser } from '../auth/auth.service.js';
+import type { AuthUser } from '../auth/authService.js';
 
 const SALT_ROUNDS = 10;
 

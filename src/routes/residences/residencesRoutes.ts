@@ -24,7 +24,7 @@ import {
   respondJoinRequest,
   transferOwner,
   update,
-} from './residences.controller.js';
+} from '../../controllers/residences/residencesController.js';
 
 const router = Router();
 

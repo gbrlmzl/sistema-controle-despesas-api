@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../../middlewares/auth.js';
 import { validateBody } from '../../middlewares/validate.js';
 import { markNotificationsReadSchema } from '../../schemas/notificacoes.js';
-import { list, markRead } from './notifications.controller.js';
+import { list, markRead } from '../../controllers/notifications/notificationsController.js';
 
 const router = Router();
 

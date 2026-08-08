@@ -1,7 +1,7 @@
 import passport from 'passport';
 import GoogleStrategy from 'passport-google-oidc';
 import { env, googleAuthEnabled } from './env.js';
-import { findOrCreateGoogleUser } from '../modules/auth/auth.service.js';
+import { findOrCreateGoogleUser } from '../services/auth/authService.js';
 
 // Sem `passport.session()` de propósito: a API é stateless (JWT em cookie httpOnly),
 // então serializeUser/deserializeUser não se aplicam aqui — só existem pra sessão

@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { AuthUser } from '../auth/auth.service.js';
+import type { AuthUser } from '../../services/auth/authService.js';
 import { AppError } from '../../utils/AppError.js';
-import { getResidenceReport, type ReportTab } from './reports.service.js';
-import type { Competency } from '../expenses/expenses.service.js';
+import { getResidenceReport, type ReportTab } from '../../services/reports/reportsService.js';
+import type { Competency } from '../../services/expenses/expensesService.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;

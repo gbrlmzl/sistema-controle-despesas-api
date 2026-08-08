@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { getUserById, verifyToken } from '../modules/auth/auth.service.js';
+import { getUserById, verifyToken } from '../services/auth/authService.js';
 import { AppError } from '../utils/AppError.js';
 
 export const AUTH_COOKIE_NAME = 'JWT';

@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { AuthUser } from '../auth/auth.service.js';
-import { changeUserPassword, updateAvatar as updateAvatarService } from './users.service.js';
+import type { AuthUser } from '../../services/auth/authService.js';
+import { changeUserPassword, updateAvatar as updateAvatarService } from '../../services/users/usersService.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;

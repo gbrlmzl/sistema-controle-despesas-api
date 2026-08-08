@@ -1,8 +1,8 @@
 import prisma from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import type { ExpenseCategory } from '../../generated/client.js';
-import { loadUserResidenceContext } from '../residences/residences.service.js';
-import { createNotifications } from '../notifications/notifications.service.js';
+import { loadUserResidenceContext } from '../residences/residencesService.js';
+import { createNotifications } from '../notifications/notificationsService.js';
 
 export interface Competency {
   month: number;

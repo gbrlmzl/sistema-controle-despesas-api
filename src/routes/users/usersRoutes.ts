@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../../middlewares/auth.js';
 import { validateBody } from '../../middlewares/validate.js';
 import { changePasswordSchema, updateAvatarSchema } from '../../schemas/usuarios.js';
-import { changePassword, updateAvatar } from './users.controller.js';
+import { changePassword, updateAvatar } from '../../controllers/users/usersController.js';
 
 const router = Router();
 

@@ -5,12 +5,12 @@ import express, { type Request, type Response } from 'express';
 import { env, googleAuthEnabled } from './config/env.js';
 import passport from './config/passport.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
-import authRoutes from './modules/auth/auth.routes.js';
-import residencesRoutes from './modules/residences/residences.routes.js';
-import expensesRoutes from './modules/expenses/expenses.routes.js';
-import reportsRoutes from './modules/reports/reports.routes.js';
-import notificationsRoutes from './modules/notifications/notifications.routes.js';
-import usersRoutes from './modules/users/users.routes.js';
+import authRoutes from './routes/auth/authRoutes.js';
+import residencesRoutes from './routes/residences/residencesRoutes.js';
+import expensesRoutes from './routes/expenses/expensesRoutes.js';
+import reportsRoutes from './routes/reports/reportsRoutes.js';
+import notificationsRoutes from './routes/notifications/notificationsRoutes.js';
+import usersRoutes from './routes/users/usersRoutes.js';
 
 const app = express();
 

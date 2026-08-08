@@ -1,4 +1,4 @@
-import { calculateInviteExpiration, normalizeResidenceCode } from '../../src/modules/residences/residences.service.js';
+import { calculateInviteExpiration, normalizeResidenceCode } from '../../src/services/residences/residencesService.js';
 
 describe('normalizeResidenceCode (RN-012)', () => {
   it('remove espaços nas pontas e converte para maiúsculas', () => {

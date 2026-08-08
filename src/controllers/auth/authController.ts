@@ -11,7 +11,7 @@ import {
   rotateRefreshToken,
   signToken,
   type AuthUser,
-} from './auth.service.js';
+} from '../../services/auth/authService.js';
 
 const REFRESH_COOKIE_PATH = '/auth';
 

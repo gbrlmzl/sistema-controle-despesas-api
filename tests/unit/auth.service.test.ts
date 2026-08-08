@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { env } from '../../src/config/env.js';
-import { signToken, verifyToken } from '../../src/modules/auth/auth.service.js';
+import { signToken, verifyToken } from '../../src/services/auth/authService.js';
 import { AppError } from '../../src/utils/AppError.js';
 
 describe('bcrypt (hash de senha)', () => {

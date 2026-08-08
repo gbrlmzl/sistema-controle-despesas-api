@@ -11,7 +11,7 @@ import {
   reopenMonthHandler,
   stopRecurrence,
   update,
-} from './expenses.controller.js';
+} from '../../controllers/expenses/expensesController.js';
 
 const router = Router();
 

@@ -3,7 +3,7 @@ import { googleAuthEnabled } from '../../config/env.js';
 import passport from '../../config/passport.js';
 import { validateBody } from '../../middlewares/validate.js';
 import { loginSchema, registerSchema } from '../../schemas/usuarios.js';
-import { googleCallback, login, logout, refresh, register } from './auth.controller.js';
+import { googleCallback, login, logout, refresh, register } from '../../controllers/auth/authController.js';
 
 const router = Router();
 

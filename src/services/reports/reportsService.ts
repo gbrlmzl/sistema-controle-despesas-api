@@ -1,7 +1,7 @@
 import prisma from '../../config/prisma.js';
 import type { ExpenseCategory } from '../../generated/client.js';
-import { loadUserResidenceContext } from '../residences/residences.service.js';
-import { getOpenCompetency, type Competency } from '../expenses/expenses.service.js';
+import { loadUserResidenceContext } from '../residences/residencesService.js';
+import { getOpenCompetency, type Competency } from '../expenses/expensesService.js';
 
 //RN-062 -> o gráfico de evolução mostra as últimas 6 competências
 export const COMPETENCIES_IN_EVOLUTION = 6;

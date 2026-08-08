@@ -1,5 +1,5 @@
-import { getNextCompetency } from '../../src/modules/expenses/expenses.service.js';
-import { getPreviousCompetency } from '../../src/modules/reports/reports.service.js';
+import { getNextCompetency } from '../../src/services/expenses/expensesService.js';
+import { getPreviousCompetency } from '../../src/services/reports/reportsService.js';
 
 describe('getNextCompetency', () => {
   it('avança um mês dentro do mesmo ano', () => {

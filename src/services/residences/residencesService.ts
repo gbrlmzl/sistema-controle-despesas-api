@@ -1,8 +1,8 @@
 import { randomInt } from 'node:crypto';
 import prisma from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
-import { createNotification } from '../notifications/notifications.service.js';
-import { getOpenCompetency } from '../expenses/expenses.service.js';
+import { createNotification } from '../notifications/notificationsService.js';
+import { getOpenCompetency } from '../expenses/expensesService.js';
 import { normalizeUsername } from '../../lib/username.js';
 
 // --- Código público da residência ---

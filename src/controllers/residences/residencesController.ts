@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { AuthUser } from '../auth/auth.service.js';
+import type { AuthUser } from '../../services/auth/authService.js';
 import { AppError } from '../../utils/AppError.js';
 import {
   cancelInvite,
@@ -20,7 +20,7 @@ import {
   respondToJoinRequest,
   transferOwnership,
   updateResidence,
-} from './residences.service.js';
+} from '../../services/residences/residencesService.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;
