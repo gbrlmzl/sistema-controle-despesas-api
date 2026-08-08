@@ -1,6 +1,13 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+// Uma variável presente no .env mas deixada em branco (ex.: `GOOGLE_CLIENT_ID=`) chega
+// aqui como string vazia, não como `undefined` — sem isso, o .refine() abaixo trataria
+// "todas em branco" como "todas preenchidas".
+function optionalString<T extends z.ZodType<string>>(schema: T) {
+  return z.preprocess((v) => (v === '' ? undefined : v), schema.optional());
+}
+
 const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -17,12 +24,12 @@ const envSchema = z
     // Login com Google é opcional: só exigido se as 3 variáveis abaixo forem
     // fornecidas juntas (ver .refine abaixo). Sem elas, a API funciona normalmente
     // só com login/registro por credenciais.
-    GOOGLE_CLIENT_ID: z.string().optional(),
-    GOOGLE_CLIENT_SECRET: z.string().optional(),
-    GOOGLE_CALLBACK_URL: z.url().optional(),
+    GOOGLE_CLIENT_ID: optionalString(z.string()),
+    GOOGLE_CLIENT_SECRET: optionalString(z.string()),
+    GOOGLE_CALLBACK_URL: optionalString(z.url()),
     // Assina o cookie de "state" usado só durante o handshake do OAuth do Google
     // (proteção CSRF do passport-oauth2) — não guarda sessão de usuário nenhuma.
-    COOKIE_SESSION_SECRET: z.string().min(32).optional(),
+    COOKIE_SESSION_SECRET: optionalString(z.string().min(32)),
   })
   .refine(
     (data) =>
