@@ -17,3 +17,21 @@ export async function createNotification({ userId, type, title, message, linkTo 
     data: { userId, type, title, message, linkTo: linkTo ?? null },
   });
 }
+
+//Variante em lote, usada quando o mesmo evento notifica vários usuários de uma vez
+//(ex.: fechamento de mês avisa todos os membros da residência).
+export async function createNotifications(notifications: NewNotification[]) {
+  if (notifications.length === 0) {
+    return;
+  }
+
+  return prisma.notification.createMany({
+    data: notifications.map(({ userId, type, title, message, linkTo }) => ({
+      userId,
+      type,
+      title,
+      message,
+      linkTo: linkTo ?? null,
+    })),
+  });
+}

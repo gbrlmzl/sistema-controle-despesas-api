@@ -7,6 +7,8 @@ import passport from './config/passport.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import residencesRoutes from './modules/residences/residences.routes.js';
+import expensesRoutes from './modules/expenses/expenses.routes.js';
+import reportsRoutes from './modules/reports/reports.routes.js';
 
 const app = express();
 
@@ -36,6 +38,8 @@ app.get('/health', (_req: Request, res: Response) => {
 
 app.use('/auth', authRoutes);
 app.use('/residences', residencesRoutes);
+app.use('/residences', expensesRoutes);
+app.use('/residences', reportsRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
