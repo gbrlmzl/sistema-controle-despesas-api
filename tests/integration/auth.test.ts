@@ -76,10 +76,10 @@ describe('POST /auth/login', () => {
     const body = validRegisterBody();
     await request(app).post('/auth/register').send(body);
 
-    const response = await request(app).post('/auth/login').send({ email: body.email, password: body.password });
+    const response = await request(app).post('/auth/login').send({ username: body.username, password: body.password });
 
     expect(response.status).toBe(200);
-    expect(response.body.user.email).toBe(body.email);
+    expect(response.body.user.username).toBe(body.username);
     expect(getSetCookie(response, 'JWT')).toBeDefined();
     expect(getSetCookie(response, 'refreshToken')).toBeDefined();
   });
@@ -88,13 +88,15 @@ describe('POST /auth/login', () => {
     const body = validRegisterBody();
     await request(app).post('/auth/register').send(body);
 
-    const response = await request(app).post('/auth/login').send({ email: body.email, password: 'senhaErrada1' });
+    const response = await request(app).post('/auth/login').send({ username: body.username, password: 'senhaErrada1' });
 
     expect(response.status).toBe(401);
   });
 
-  it('rejeita email inexistente com 401', async () => {
-    const response = await request(app).post('/auth/login').send({ email: uniqueEmail(), password: 'qualquerSenha1' });
+  it('rejeita username inexistente com 401', async () => {
+    const response = await request(app)
+      .post('/auth/login')
+      .send({ username: `naoexiste${Date.now() % 100000}`, password: 'qualquerSenha1' });
 
     expect(response.status).toBe(401);
   });

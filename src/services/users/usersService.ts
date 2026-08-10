@@ -15,10 +15,23 @@ function toAuthUser(user: { id: number; name: string; username: string | null; e
   };
 }
 
-export async function updateAvatar(userId: number, avatar: string): Promise<AuthUser> {
+// Contas de login social (Google) não têm senha local — usado pelo front pra decidir
+// se mostra a tela de troca de senha.
+export async function userHasPassword(userId: number): Promise<boolean> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { password: true } });
+  return user?.password != null;
+}
+
+export async function updateProfile(
+  userId: number,
+  { name, avatar }: { name?: string; avatar?: string },
+): Promise<AuthUser> {
   const user = await prisma.user.update({
     where: { id: userId },
-    data: { profilePic: avatar },
+    data: {
+      ...(name !== undefined && { name }),
+      ...(avatar !== undefined && { profilePic: avatar }),
+    },
   });
 
   return toAuthUser(user);

@@ -2,6 +2,7 @@ import cookieParser from 'cookie-parser';
 import cookieSession from 'cookie-session';
 import cors from 'cors';
 import express, { type Request, type Response } from 'express';
+import morgan from 'morgan';
 import { env, googleAuthEnabled } from './config/env.js';
 import passport from './config/passport.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
@@ -14,7 +15,13 @@ import usersRoutes from './routes/users/usersRoutes.js';
 
 const app = express();
 
-app.use(cors({ credentials: true }));
+// Log de cada requisição recebida (método, path, status, tempo de resposta) no terminal.
+// Silenciado em test pra não poluir a saída do Jest/Supertest.
+if (env.NODE_ENV !== 'test') {
+  app.use(morgan('dev'));
+}
+
+app.use(cors({ credentials: true, origin: env.FRONTEND_URL }));
 app.use(express.json());
 app.use(cookieParser());
 

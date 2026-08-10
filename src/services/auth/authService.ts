@@ -70,11 +70,11 @@ export async function getUserById(id: number): Promise<AuthUser | null> {
   return user ? toAuthUser(user) : null;
 }
 
-export async function loginWithCredentials(email: string, password: string): Promise<AuthUser> {
-  const user = await prisma.user.findUnique({ where: { email } });
+export async function loginWithCredentials(username: string, password: string): Promise<AuthUser> {
+  const user = await prisma.user.findUnique({ where: { username: normalizeUsername(username) } });
 
   // Mesma mensagem tanto pra "não existe" quanto pra "senha errada" — não dar
-  // pista de qual delas falhou, pra não facilitar enumeração de emails cadastrados.
+  // pista de qual delas falhou, pra não facilitar enumeração de usernames cadastrados.
   if (!user || !user.password) {
     throw new AppError(401, 'Credenciais inválidas.');
   }

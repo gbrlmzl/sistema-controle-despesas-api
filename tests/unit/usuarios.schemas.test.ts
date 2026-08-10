@@ -1,16 +1,28 @@
-import { AVATARS, changePasswordSchema, updateAvatarSchema } from '../../src/schemas/usuarios.js';
+import { AVATARS, changePasswordSchema, updateProfileSchema } from '../../src/schemas/usuarios.js';
 
-describe('updateAvatarSchema', () => {
+describe('updateProfileSchema', () => {
   it('aceita um avatar da whitelist', () => {
-    expect(updateAvatarSchema.safeParse({ avatar: AVATARS[0] }).success).toBe(true);
+    expect(updateProfileSchema.safeParse({ avatar: AVATARS[0] }).success).toBe(true);
   });
 
   it('rejeita um avatar fora da whitelist', () => {
-    expect(updateAvatarSchema.safeParse({ avatar: '/avatars/avatar-99.svg' }).success).toBe(false);
+    expect(updateProfileSchema.safeParse({ avatar: '/avatars/avatar-99.svg' }).success).toBe(false);
   });
 
-  it('rejeita corpo sem avatar', () => {
-    expect(updateAvatarSchema.safeParse({}).success).toBe(false);
+  it('aceita um nome válido', () => {
+    expect(updateProfileSchema.safeParse({ name: 'Novo Nome' }).success).toBe(true);
+  });
+
+  it('rejeita nome vazio', () => {
+    expect(updateProfileSchema.safeParse({ name: '' }).success).toBe(false);
+  });
+
+  it('aceita nome e avatar juntos', () => {
+    expect(updateProfileSchema.safeParse({ name: 'Novo Nome', avatar: AVATARS[0] }).success).toBe(true);
+  });
+
+  it('rejeita corpo vazio (nenhum campo informado)', () => {
+    expect(updateProfileSchema.safeParse({}).success).toBe(false);
   });
 });
 

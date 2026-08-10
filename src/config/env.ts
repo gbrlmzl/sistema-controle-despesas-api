@@ -13,6 +13,9 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().default(3001),
     DATABASE_URL: z.string().min(1, 'DATABASE_URL é obrigatória'),
+    // Origem do front-end: usada pro CORS (Access-Control-Allow-Origin não pode ser "*"
+    // quando credentials:true) e pro redirect final do callback do Google OAuth.
+    FRONTEND_URL: z.url().default('http://localhost:3000'),
 
     JWT_SECRET: z.string().min(32, 'JWT_SECRET deve ter no mínimo 32 caracteres'),
     // Access token de vida curta (stateless) — se vazar, expira sozinho rápido.

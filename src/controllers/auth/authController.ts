@@ -65,8 +65,8 @@ export async function register(req: Request, res: Response, next: NextFunction):
 
 export async function login(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { email, password } = req.body as { email: string; password: string };
-    const user = await loginWithCredentials(email, password);
+    const { username, password } = req.body as { username: string; password: string };
+    const user = await loginWithCredentials(username, password);
     await establishSession(res, user);
     res.status(200).json({ user });
   } catch (err) {
@@ -109,12 +109,14 @@ export async function logout(req: Request, res: Response, next: NextFunction): P
 }
 
 // Chamado depois que passport.authenticate('google', { session: false }) já
-// rodou o verify callback (findOrCreateGoogleUser) e populou req.user.
+// rodou o verify callback (findOrCreateGoogleUser) e populou req.user. O navegador
+// chegou aqui por navegação direta (redirect OAuth), não por fetch — por isso a
+// resposta também precisa ser um redirect de volta pro front, não JSON.
 export async function googleCallback(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = req.user as AuthUser;
     await establishSession(res, user);
-    res.status(200).json({ user });
+    res.redirect(env.FRONTEND_URL);
   } catch (err) {
     next(err);
   }

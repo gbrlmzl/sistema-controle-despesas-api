@@ -1,15 +1,30 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthUser } from '../../services/auth/authService.js';
-import { changeUserPassword, updateAvatar as updateAvatarService } from '../../services/users/usersService.js';
+import {
+  changeUserPassword,
+  updateProfile as updateProfileService,
+  userHasPassword,
+} from '../../services/users/usersService.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;
 }
 
-export async function updateAvatar(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getMe(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = currentUser(req);
-    const updated = await updateAvatarService(user.id, req.body.avatar);
+    const hasPassword = await userHasPassword(user.id);
+    res.status(200).json({ user: { ...user, hasPassword } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = currentUser(req);
+    const { name, avatar } = req.body as { name?: string; avatar?: string };
+    const updated = await updateProfileService(user.id, { name, avatar });
     res.status(200).json({ user: updated });
   } catch (err) {
     next(err);

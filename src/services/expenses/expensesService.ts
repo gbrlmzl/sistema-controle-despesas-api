@@ -67,6 +67,7 @@ export async function listExpensesForCompetency(residenceId: number, month: numb
         category: true,
         isRecurring: true,
         createdById: true,
+        createdAt: true,
         createdBy: { select: { name: true } },
       },
     }),
@@ -87,6 +88,7 @@ export async function listExpensesForCompetency(residenceId: number, month: numb
       category: ExpenseCategory;
       isRecurring: boolean;
       createdById: number;
+      createdAt: Date;
     }[];
   }
 
@@ -108,6 +110,7 @@ export async function listExpensesForCompetency(residenceId: number, month: numb
       category: expense.category,
       isRecurring: expense.isRecurring,
       createdById: expense.createdById,
+      createdAt: expense.createdAt,
     });
   }
 

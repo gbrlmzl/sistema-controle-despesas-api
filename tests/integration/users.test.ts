@@ -42,7 +42,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('PATCH /users/me (avatar)', () => {
+describe('PATCH /users/me (perfil)', () => {
   it('rejeita requisição sem autenticação', async () => {
     const response = await request(app).patch('/users/me').send({ avatar: AVATARS[0] });
     expect(response.status).toBe(401);
@@ -51,6 +51,12 @@ describe('PATCH /users/me (avatar)', () => {
   it('rejeita avatar fora da whitelist', async () => {
     const user = await registerUser('Avatar Inválido');
     const response = await user.agent.patch('/users/me').send({ avatar: '/avatars/nao-existe.svg' });
+    expect(response.status).toBe(400);
+  });
+
+  it('rejeita corpo vazio (nenhum campo informado)', async () => {
+    const user = await registerUser('Corpo Vazio');
+    const response = await user.agent.patch('/users/me').send({});
     expect(response.status).toBe(400);
   });
 
@@ -63,6 +69,26 @@ describe('PATCH /users/me (avatar)', () => {
 
     const persisted = await prisma.user.findUnique({ where: { id: user.id } });
     expect(persisted?.profilePic).toBe(AVATARS[3]);
+  });
+
+  it('troca o nome do usuário autenticado', async () => {
+    const user = await registerUser('Nome Antigo');
+    const response = await user.agent.patch('/users/me').send({ name: 'Nome Novo' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.name).toBe('Nome Novo');
+
+    const persisted = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(persisted?.name).toBe('Nome Novo');
+  });
+
+  it('troca nome e avatar juntos', async () => {
+    const user = await registerUser('Combo Antigo');
+    const response = await user.agent.patch('/users/me').send({ name: 'Combo Novo', avatar: AVATARS[5] });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.name).toBe('Combo Novo');
+    expect(response.body.user.profilePic).toBe(AVATARS[5]);
   });
 });
 
@@ -107,12 +133,12 @@ describe('PATCH /users/me/password', () => {
 
     const loginWithOldPassword = await request(app)
       .post('/auth/login')
-      .send({ email: user.email, password: user.password });
+      .send({ username: user.username, password: user.password });
     expect(loginWithOldPassword.status).toBe(401);
 
     const loginWithNewPassword = await request(app)
       .post('/auth/login')
-      .send({ email: user.email, password: newPassword });
+      .send({ username: user.username, password: newPassword });
     expect(loginWithNewPassword.status).toBe(200);
   });
 });

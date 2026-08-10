@@ -8,9 +8,11 @@ export const usernameSchema = z
   .max(20, 'O nome de usuário deve ter no máximo 20 caracteres')
   .regex(/^[a-z0-9_]+$/, 'O nome de usuário aceita apenas letras minúsculas, números e _');
 
+export const nameSchema = z.string().min(1, 'O nome não pode estar vazio').max(100);
+
 export const registerSchema = z
   .object({
-    name: z.string().min(1, 'O nome não pode estar vazio').max(100),
+    name: nameSchema,
     username: usernameSchema,
     email: z.email('Email inválido'),
     password: z
@@ -26,7 +28,7 @@ export const registerSchema = z
   });
 
 export const loginSchema = z.object({
-  email: z.email('Email inválido'),
+  username: usernameSchema,
   password: z.string().min(1, 'Informe a senha'),
 });
 
@@ -56,9 +58,14 @@ export const AVATARS = [
   '/avatars/avatar-20.svg',
 ] as const;
 
-export const updateAvatarSchema = z.object({
-  avatar: z.enum(AVATARS, { message: 'Avatar inválido' }),
-});
+export const updateProfileSchema = z
+  .object({
+    name: nameSchema.optional(),
+    avatar: z.enum(AVATARS, { message: 'Avatar inválido' }).optional(),
+  })
+  .refine((data) => data.name !== undefined || data.avatar !== undefined, {
+    message: 'Informe ao menos um campo para atualizar.',
+  });
 
 export const changePasswordSchema = z
   .object({
