@@ -273,6 +273,74 @@ describe('fechamento e reabertura de mês', () => {
   });
 });
 
+describe('seletor de competências (GET /expenses/competencies)', () => {
+  let owner: RegisteredUser;
+  let member: RegisteredUser;
+  let code: string;
+
+  beforeAll(async () => {
+    ({ owner, member, code } = await createResidenceWithMember('Dono Competências', 'Membro Competências'));
+  });
+
+  it('rejeita requisição sem autenticação', async () => {
+    const response = await request(app).get(`/residences/${code}/expenses/competencies`);
+    expect(response.status).toBe(401);
+  });
+
+  it('quem não é membro recebe 404', async () => {
+    const outsider = await registerUser('Fora Competências');
+    const response = await outsider.agent.get(`/residences/${code}/expenses/competencies`);
+    expect(response.status).toBe(404);
+  });
+
+  it('sem nenhuma despesa lançada, a lista vem vazia', async () => {
+    const response = await owner.agent.get(`/residences/${code}/expenses/competencies`);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+  });
+
+  it('uma despesa excluída não conta para a competência', async () => {
+    const created = await member.agent
+      .post(`/residences/${code}/expenses`)
+      .send({ name: 'Descartável', valueInCents: 500, category: 'OUTROS', isRecurring: false });
+    await member.agent.delete(`/residences/${code}/expenses/${created.body.expense.id}`);
+
+    const response = await owner.agent.get(`/residences/${code}/expenses/competencies`);
+    expect(response.body).toEqual([]);
+  });
+
+  it('após lançar uma despesa, a competência aberta aparece com isClosed=false', async () => {
+    await owner.agent
+      .post(`/residences/${code}/expenses`)
+      .send({ name: 'Condomínio', valueInCents: 45000, category: 'OUTROS', isRecurring: false });
+
+    const response = await owner.agent.get(`/residences/${code}/expenses/competencies`);
+    expect(response.body).toEqual([{ month: currentMonth, year: currentYear, isClosed: false }]);
+  });
+
+  it('após fechar o mês, a competência passa a isClosed=true', async () => {
+    const closeResponse = await owner.agent
+      .post(`/residences/${code}/expenses/month-closures`)
+      .send({ month: currentMonth, year: currentYear });
+    expect(closeResponse.status).toBe(201);
+
+    const response = await owner.agent.get(`/residences/${code}/expenses/competencies`);
+    expect(response.body).toEqual([{ month: currentMonth, year: currentYear, isClosed: true }]);
+  });
+
+  it('ao lançar despesa na nova competência aberta, a lista traz as duas, mais recente primeiro', async () => {
+    await member.agent
+      .post(`/residences/${code}/expenses`)
+      .send({ name: 'Internet', valueInCents: 9990, category: 'ASSINATURAS', isRecurring: false });
+
+    const response = await owner.agent.get(`/residences/${code}/expenses/competencies`);
+    expect(response.body).toEqual([
+      { month: nextMonth, year: nextYear, isClosed: false },
+      { month: currentMonth, year: currentYear, isClosed: true },
+    ]);
+  });
+});
+
 describe('relatório da residência', () => {
   let owner: RegisteredUser;
   let member: RegisteredUser;
@@ -289,10 +357,20 @@ describe('relatório da residência', () => {
       .send({ name: 'Mercado', valueInCents: 50000, category: 'ALIMENTACAO', isRecurring: false });
   });
 
+  it('rejeita requisição sem autenticação', async () => {
+    const response = await request(app).get(`/residences/${code}/reports`);
+    expect(response.status).toBe(401);
+  });
+
   it('quem não é membro recebe 404', async () => {
     const outsider = await registerUser('Fora Relatório');
     const response = await outsider.agent.get(`/residences/${code}/reports`);
     expect(response.status).toBe(404);
+  });
+
+  it('rejeita mês/ano inválidos na query com 400', async () => {
+    const response = await owner.agent.get(`/residences/${code}/reports?month=13&year=2026`);
+    expect(response.status).toBe(400);
   });
 
   it('a aba padrão é a da residência inteira', async () => {
