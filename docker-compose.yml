@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    profiles: ["dev", "prod"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-sistema_despesas}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sistema_despesas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Roda `prisma migrate deploy` uma vez e sai — nem api-dev nem api migram sozinhos (ver
+  # seção 12.2 do plano: migração fora do processo que serve tráfego).
+  migrate:
+    profiles: ["dev", "prod"]
+    build:
+      context: .
+      target: build
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-sistema_despesas}
+    command: ["npx", "prisma", "migrate", "deploy"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Perfil dev: hot-reload via tsx watch, código montado como volume.
+  api-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      target: build
+    command: ["npm", "run", "dev"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-sistema_despesas}
+    ports:
+      - "${PORT:-3001}:${PORT:-3001}"
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Perfil prod: a imagem final enxuta (estágio "runtime") — a mesma que o CI builda e publica
+  # no GHCR (ver .github/workflows/ci.yml).
+  api:
+    profiles: ["prod"]
+    build:
+      context: .
+      target: runtime
+    image: ${API_IMAGE:-sistema-controle-despesas-api}:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-sistema_despesas}
+    ports:
+      - "${PORT:-3001}:${PORT:-3001}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

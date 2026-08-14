@@ -264,8 +264,11 @@ contra a recomendação atual (RFC 9700 — OAuth 2.0 Security Best Current Prac
 - **Nunca texto puro no banco:** só o hash (SHA-256) do refresh token é armazenado — igual senha,
   mas sem custo de bcrypt (já é aleatório de alta entropia, não escolhido por humano).
 - **Cookies diferentes, propriedades diferentes:** `JWT` (access token) com `path: '/'`,
-  `sameSite: 'lax'`, 15 min. `refreshToken` com `path: '/auth'` (só é enviado pras próprias rotas
-  de auth, nunca pro resto da API), `sameSite: 'strict'`, 7 dias (`REFRESH_TOKEN_EXPIRES_IN`).
+  `sameSite: 'lax'`, 15 min. `REFRESH` com `path: '/'` e `sameSite: 'lax'` também — a versão
+  inicial usava `path: '/auth'` + `sameSite: 'strict'`, mas isso quebrava o próprio mecanismo de
+  refresh no front-end (que chama a API via rewrite `/api/*`, então o navegador nunca vê um path
+  que comece com `/auth`; e o middleware de rota do front precisa ler esse cookie em requisições
+  de página, que também não começam com `/auth`). 7 dias (`REFRESH_TOKEN_EXPIRES_IN`).
 - **Logout revoga de verdade:** não é só limpar cookie — o refresh token correspondente é marcado
   revogado no banco, então não pode ser reaproveitado mesmo que alguém tenha capturado o valor
   antes do logout.
@@ -410,3 +413,132 @@ completa, que foi rápido por ser um trabalho mecânico; isto aqui tem mais supe
 3. O front-end Next.js não faz mais nenhuma chamada direta ao Prisma para os domínios já
    migrados — só `fetch()` para a API Express.
 4. `src/deprecated/` continua fora de escopo (decisão já pendente, não relacionada a este plano).
+
+## 12. Docker e CI/CD (implementado em 2026-08-13)
+
+> **Implementado e validado localmente em 2026-08-13.** Decisões confirmadas pelo usuário: (1) o
+> `docker-compose.yml` tem **dois perfis**, `dev` e `prod` — o mesmo arquivo, não dois arquivos
+> separados; (2) o workflow do GitHub Actions vai até **build + publish da imagem no GHCR**
+> (`ghcr.io`), não só validação. Arquivos criados: `Dockerfile`, `docker-compose.yml`,
+> `.dockerignore`, `.github/workflows/ci.yml`; `package.json` (script `build` passou a rodar
+> `prisma generate` antes do `tsc`).
+>
+> **Validação real feita (não só "deveria funcionar"):** `docker compose --profile prod build`
+> (as duas imagens, `migrate` e `api`, buildam sem erro) → `docker compose --profile prod up`
+> (Postgres sobe saudável, `migrate` aplica as 2 migrations existentes contra o banco
+> containerizado e sai com sucesso, `api` sobe em seguida) → `GET /health` respondendo
+> `{"status":"ok"}` a partir do **container de verdade**, não de um processo local (o teste
+> inicial deu falso positivo por causa de uma porta 8080 já ocupada localmente — refeito isolando
+> a porta pra confirmar que era o container respondendo, não outra coisa). Stack derrubada e
+> volumes limpos depois.
+>
+> **Achado durante a validação, não previsto na proposta original:** a imagem `node:24-bookworm-
+> slim` não vem com OpenSSL — o schema-engine do Prisma (usado por `migrate deploy`) é um binário
+> nativo que depende de libssl, e sem isso `prisma generate` já avisava
+> `"Prisma failed to detect the libssl/openssl version"`. Corrigido instalando `openssl` via
+> `apt-get` no estágio `deps` do `Dockerfile` (afeta só `deps`/`build`/`migrate` — o estágio
+> `runtime` final não precisa, porque a API em si usa o driver adapter `@prisma/adapter-pg`, sem
+> engine nativa).
+
+### 12.1 Lacuna atual
+
+Nada disto existe hoje no repo: `Dockerfile`, `docker-compose.yml`, `.dockerignore`,
+`.github/workflows/*`. Três pontos do projeto atual afetam diretamente o desenho abaixo:
+
+- **`npm run build` não roda `prisma generate` antes do `tsc`.** Hoje isso é um passo manual
+  (`npm run prisma:generate`) que já foi rodado uma vez no ambiente de dev, então ninguém notou.
+  Num build limpo (imagem Docker, runner do CI) `src/generated/` não existe — `tsc` falha ao
+  resolver `../generated/client.js`. **Proposta:** mudar o script `build` do `package.json` para
+  `"prisma generate && tsc -p tsconfig.build.json"`, assim tanto o Dockerfile quanto o CI só
+  precisam chamar `npm run build`, sem duplicar esse encadeamento em vários lugares.
+- **`bcrypt` é nativo (binding compilado), não puro-JS.** A imagem base do Docker importa: Alpine
+  (musl) frequentemente não tem prebuild disponível pro `bcrypt` e cai em compilar na hora (exige
+  `python3`/`make`/`g++` na imagem). **Proposta:** `node:24-bookworm-slim` (Debian, glibc) em vez
+  de `node:24-alpine` — maior prebuild coverage, evita instalar toolchain de compilação na imagem
+  final só por causa de uma dependência.
+- **Prisma 7 usa driver adapter (`@prisma/adapter-pg`) + query compiler WASM, não engine binária
+  nativa.** Isso é uma vantagem aqui: não existe o problema clássico de versão de engine
+  incompatível com Alpine/musl que Prisma tinha em versões antigas — a escolha de base image acima
+  é só por causa do `bcrypt`, não do Prisma.
+
+### 12.2 Dockerfile — multi-stage
+
+```
+deps        → npm ci (todas as deps, inclui devDependencies — precisa do tsc e do prisma CLI)
+build       → copia src/prisma/tsconfig, roda `npm run build` (prisma generate + tsc) → gera dist/
+prod-deps   → npm ci --omit=dev (só dependencies de produção, numa imagem limpa)
+runtime     → node:24-bookworm-slim, copia node_modules de prod-deps + dist/ (já inclui
+              dist/generated, o client do Prisma compilado) de build, roda como usuário não-root,
+              CMD node dist/server.js
+```
+
+Pontos de desenho:
+
+- **Migração de banco (`prisma migrate deploy`) não roda dentro da imagem `runtime`.** O CLI do
+  Prisma é `devDependency` (não entra em `prod-deps`), e mesmo que entrasse, rodar migração dentro
+  do processo que também serve tráfego é arriscado se um dia houver mais de uma réplica (duas
+  instâncias migrando ao mesmo tempo). **Proposta:** a migração roda como um passo/serviço à parte,
+  reusando a imagem intermediária `build` (que ainda tem o Prisma CLI completo) — ver serviço
+  `migrate` no compose (12.3) e o job do CI (12.4). É o padrão comum de multi-stage: a imagem final
+  fica enxuta, e uma imagem "builder" intermediária é reaproveitada só para operações pontuais.
+- **`HEALTHCHECK`** usa o próprio `/health` que já existe, sem precisar instalar `curl` na imagem
+  (que aumentaria a superfície): `node -e "fetch('http://localhost:'+process.env.PORT+'/health')...` .
+- **Usuário não-root** na imagem final (boa prática padrão, o Node já tem um usuário `node`
+  pré-criado nas imagens oficiais — só precisa de `USER node` antes do `CMD`).
+- **`.dockerignore`** exclui `node_modules/`, `dist/`, `src/generated/`, `.git/`, `.env*`,
+  `tests/`, `docs/`, `coverage/`, `*.md` — tudo que não deveria ir para dentro do build context nem
+  da imagem.
+
+### 12.3 `docker-compose.yml` — perfis `dev` e `prod`
+
+Um arquivo único, com `profiles:` do próprio compose (não dois arquivos) — decisão já confirmada:
+
+| Serviço | Perfis | Build target | Papel |
+| :---- | :---- | :---- | :---- |
+| `postgres` | `dev`, `prod` | — (imagem `postgres:17-alpine`, oficial — o problema de musl é só do `bcrypt`, não afeta o Postgres) | Banco, com healthcheck `pg_isready` e volume nomeado para persistir dados |
+| `migrate` | `dev`, `prod` | `build` (estágio intermediário do Dockerfile, com Prisma CLI) | Roda `npx prisma migrate deploy` uma vez e sai; `api-dev`/`api` esperam ele terminar com sucesso (`depends_on: condition: service_completed_successfully`) |
+| `api-dev` | `dev` | `build` (estágio intermediário, tem `tsx`) | `npm run dev` (tsx watch), monta `./src` como volume pra hot-reload, usa o `.env` local |
+| `api` | `prod` | `runtime` (estágio final, enxuto) | A imagem de produção de verdade — a mesma que o CI builda e publica no GHCR (12.4) |
+
+Uso pretendido:
+- Dev local: `docker compose --profile dev up` (sobe `postgres` + `migrate` + `api-dev`).
+- Validação "modo produção" local ou no CI: `docker compose --profile prod up` (sobe `postgres` +
+  `migrate` + `api`, a imagem final de verdade, igual à que vai pro GHCR).
+
+### 12.4 GitHub Actions — `.github/workflows/ci.yml`
+
+Dois jobs, o segundo depende do primeiro:
+
+**Job `test`** (todo push e PR):
+1. `actions/checkout`, `actions/setup-node@v4` (Node 24, `cache: npm`).
+2. Serviço `postgres:17-alpine` nativo do Actions (`services:` do workflow, não o compose) com
+   healthcheck.
+3. `npm ci` → `npx prisma migrate deploy` (contra o Postgres de serviço) → `npm run build` →
+   `npm test`.
+4. Variáveis de ambiente do job: `DATABASE_URL` apontando pro serviço, `JWT_SECRET` e
+   `COOKIE_SESSION_SECRET` gerados na hora (`openssl rand -hex 32`, não precisam ser segredo real
+   pra rodar teste), `NODE_ENV=test`. Variáveis do Google OAuth ficam **de fora** — o
+   `googleAuthEnabled` já foi desenhado pra tratar isso como "desabilitado", não erro (seção 5).
+
+**Job `docker`** (`needs: test`, só builda; publica só em push na `main`, não em PR):
+1. `docker/setup-buildx-action`.
+2. `docker compose --profile prod build` (builda `migrate` e `api` a partir do mesmo
+   `docker-compose.yml` do 12.3 — usa os perfis de verdade, não um `docker build` avulso).
+3. `docker compose --profile prod up -d`, espera `/health` responder 200 (retry loop curto) —
+   smoke test de que a imagem final sobe e fala com o banco de verdade.
+4. `docker compose --profile prod down`.
+5. Login no GHCR com `docker/login-action` usando `secrets.GITHUB_TOKEN` (token automático do
+   próprio Actions — **não precisa criar nenhum secret novo**, só declarar
+   `permissions: packages: write` no job).
+6. Tag e push da imagem `api` como `ghcr.io/<owner>/<repo>:latest` e
+   `ghcr.io/<owner>/<repo>:<sha curto>` — só executa esse passo `if: github.ref == 'refs/heads/main'`.
+
+### 12.5 Em aberto / a confirmar quando eu escrever os arquivos
+
+- Nome exato das variáveis de ambiente "de produção" do serviço `api` no compose (vem de um
+  `.env.prod` local não versionado, de secrets do CI, ou das duas formas dependendo de onde roda)
+  — vou seguir o mesmo padrão de `env.ts` (Zod), só preciso confirmar a origem do arquivo/secret na
+  hora de escrever.
+- Se algum dia houver deploy real (além do smoke test do CI), falta decidir onde a imagem do GHCR
+  vai rodar (VPS com `docker compose --profile prod pull && up`, algum PaaS, etc.) — fora do escopo
+  desta seção, que cobre só build/publish.
