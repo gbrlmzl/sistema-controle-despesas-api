@@ -24,6 +24,7 @@ services:
     build:
       context: .
       target: build
+    image: ${API_IMAGE:-sistema-controle-despesas-api}-migrate:${IMAGE_TAG:-local}
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-sistema_despesas}
     command: ["npx", "prisma", "migrate", "deploy"]
