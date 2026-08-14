@@ -85,6 +85,16 @@ describe('GET /notifications e PATCH /notifications', () => {
     expect(response.body.unread).toBe(0);
   });
 
+  it('rejeita page inválida na query com 400', async () => {
+    const response = await owner.agent.get('/notifications?page=0');
+    expect(response.status).toBe(400);
+  });
+
+  it('rejeita limit inválido na query com 400', async () => {
+    const response = await owner.agent.get('/notifications?limit=abc');
+    expect(response.status).toBe(400);
+  });
+
   it('rejeita corpo inválido no PATCH (nem all, nem ids)', async () => {
     const response = await owner.agent.patch('/notifications').send({});
     expect(response.status).toBe(400);
