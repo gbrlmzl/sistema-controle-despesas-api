@@ -36,9 +36,22 @@ RUN npm ci --omit=dev
 FROM node:${NODE_VERSION} AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY package.json ./
+# Mesma lib nativa que o estágio deps precisa — o schema-engine do Prisma
+# (usado por `migrate deploy`, rodado a partir desta mesma imagem no serviço
+# migrate) depende dela e essa imagem não herda o apt-get do estágio deps.
+RUN apt-get update -y && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+# --chown=node:node: os estágios anteriores rodam como root, e o Prisma
+# baixa/escreve os binários da engine em node_modules/@prisma/engines na
+# primeira execução do `migrate deploy` — sem isso, o container (que roda
+# como "node" logo abaixo) não tem permissão de escrita e o migrate falha
+# com "Can't write to .../@prisma/engines".
+COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/dist ./dist
+COPY --chown=node:node package.json ./
+# schema.prisma + migrations precisam existir em runtime: `migrate deploy` os
+# lê diretamente, não usa o Prisma Client já gerado em dist/.
+COPY --chown=node:node prisma.config.ts ./
+COPY --chown=node:node prisma ./prisma
 
 USER node
 EXPOSE 3001
