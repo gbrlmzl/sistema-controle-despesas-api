@@ -56,13 +56,13 @@ jobs:
       - name: Testes (unitário + integração)
         run: npm test
 
-  docker:
-    name: Build e publish da imagem (GHCR)
+  build:
+    name: Build da imagem (docker compose --profile prod)
     needs: test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,6 +75,45 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "sha_tag=$SHA_TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Gerar .env mínimo (só o necessário pra resolver o nome/tag da imagem no build)
+        run: |
+          cat <<EOF > .env
+          API_IMAGE=${{ steps.meta.outputs.image }}
+          IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}
+          EOF
+
+      - name: Build da imagem
+        run: docker compose --profile prod build
+
+      - name: Salvar imagens (api + migrate) para os próximos jobs
+        run: |
+          mkdir -p /tmp/images
+          docker save $(docker compose --profile prod images -q migrate api) -o /tmp/images/app-images.tar
+
+      - name: Upload das imagens como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: /tmp/images/app-images.tar
+          retention-days: 1
+
+  smoke-test:
+    name: Smoke test (sobe a stack e valida /health)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Baixar imagens do job de build
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: /tmp/images
+
+      - name: Carregar imagens no Docker local
+        run: docker load -i /tmp/images/app-images.tar
+
       - name: Gerar .env efêmero para o smoke test (perfil prod)
         run: |
           cat <<EOF > .env
@@ -86,12 +125,9 @@ jobs:
           JWT_SECRET=$(openssl rand -hex 32)
           JWT_EXPIRES_IN=15m
           REFRESH_TOKEN_EXPIRES_IN=7d
-          API_IMAGE=${{ steps.meta.outputs.image }}
-          IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}
+          API_IMAGE=${{ needs.build.outputs.image }}
+          IMAGE_TAG=${{ needs.build.outputs.sha_tag }}
           EOF
-
-      - name: Build da imagem (docker compose --profile prod)
-        run: docker compose --profile prod build
 
       - name: Subir a stack e aguardar /health
         run: |
@@ -111,8 +147,25 @@ jobs:
         if: always()
         run: docker compose --profile prod down -v
 
+  publish:
+    name: Publish da imagem (GHCR)
+    needs: [build, smoke-test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Baixar imagem do job de build
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: /tmp/images
+
+      - name: Carregar imagem no Docker local
+        run: docker load -i /tmp/images/app-images.tar
+
       - name: Login no GHCR
-        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -120,8 +173,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publicar imagem no GHCR (:sha e :latest)
-        if: github.ref == 'refs/heads/main'
         run: |
-          docker compose --profile prod push api
-          docker tag "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}" "${{ steps.meta.outputs.image }}:latest"
-          docker push "${{ steps.meta.outputs.image }}:latest"
+          docker push "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}"
+          docker tag "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}" "${{ needs.build.outputs.image }}:latest"
+          docker push "${{ needs.build.outputs.image }}:latest"
+
+  dispatch:
+    name: Disparar e2e no repo de deploy
+    needs: [build, publish]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # Pede pro repo orquestrador (sistema-controle-despesas-deploy) rodar o
+      # e2e contra esta tag exata — se passar, ele re-taggeia esta imagem
+      # como :stable.
+      - name: Disparar e2e
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.DEPLOY_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/gbrlmzl/sistema-controle-despesas-deploy/dispatches \
+            -d '{"event_type":"api-published","client_payload":{"image_tag":"${{ needs.build.outputs.sha_tag }}"}}'

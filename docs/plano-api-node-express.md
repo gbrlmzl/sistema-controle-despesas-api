@@ -505,9 +505,16 @@ Uso pretendido:
 - Validação "modo produção" local ou no CI: `docker compose --profile prod up` (sobe `postgres` +
   `migrate` + `api`, a imagem final de verdade, igual à que vai pro GHCR).
 
-### 12.4 GitHub Actions — `.github/workflows/ci.yml`
+### 12.4 GitHub Actions — `.github/workflows/ci.yml` (dividido em 5 jobs em 2026-08-14)
 
-Dois jobs, o segundo depende do primeiro:
+> **Atualizado em 2026-08-14.** O job único `docker` (builda + smoke test + publish, tudo junto)
+> foi dividido em quatro jobs (`build` → `smoke-test` → `publish` → `dispatch`) pra deixar cada
+> etapa visível separadamente no GitHub Actions UI — antes uma falha no dispatch, por exemplo,
+> aparecia como "falha no build e publish", o que era enganoso. Como cada job roda num runner
+> novo, a imagem construída no `build` é passada adiante via `docker save`/`actions/upload-
+> artifact`/`docker load` (artifact `docker-images`, retenção de 1 dia) em vez de recompilada em
+> cada etapa. Esta seção também passou a documentar o step de dispatch pro repo de deploy, que já
+> existia no workflow mas nunca tinha sido registrado aqui.
 
 **Job `test`** (todo push e PR):
 1. `actions/checkout`, `actions/setup-node@v4` (Node 24, `cache: npm`).
@@ -520,18 +527,36 @@ Dois jobs, o segundo depende do primeiro:
    pra rodar teste), `NODE_ENV=test`. Variáveis do Google OAuth ficam **de fora** — o
    `googleAuthEnabled` já foi desenhado pra tratar isso como "desabilitado", não erro (seção 5).
 
-**Job `docker`** (`needs: test`, só builda; publica só em push na `main`, não em PR):
-1. `docker/setup-buildx-action`.
-2. `docker compose --profile prod build` (builda `migrate` e `api` a partir do mesmo
-   `docker-compose.yml` do 12.3 — usa os perfis de verdade, não um `docker build` avulso).
-3. `docker compose --profile prod up -d`, espera `/health` responder 200 (retry loop curto) —
-   smoke test de que a imagem final sobe e fala com o banco de verdade.
-4. `docker compose --profile prod down`.
-5. Login no GHCR com `docker/login-action` usando `secrets.GITHUB_TOKEN` (token automático do
+**Job `build`** (`needs: test`; roda em todo push e PR):
+1. Gera um `.env` mínimo (só `API_IMAGE`/`IMAGE_TAG`, o necessário pro compose resolver o nome da
+   imagem) e roda `docker compose --profile prod build` (builda `migrate` e `api` a partir do
+   mesmo `docker-compose.yml` do 12.3).
+2. `docker save` das duas imagens (`migrate` + `api`, resolvidas via `docker compose ... images -q`
+   — não hardcoda o nome auto-gerado do serviço `migrate`) num único tar, subido como artifact
+   (`actions/upload-artifact`) pros próximos jobs.
+
+**Job `smoke-test`** (`needs: build`; roda em todo push e PR):
+1. Baixa o artifact, `docker load` das imagens.
+2. Gera o `.env` completo (`JWT_SECRET` efêmero, `POSTGRES_*`, `PORT`, etc.) e sobe a stack
+   (`docker compose --profile prod up -d`) **sem rebuildar** — usa as imagens já carregadas, que
+   batem com os nomes/tags que o compose espera porque ambos os jobs fazem checkout no mesmo nome
+   de diretório (nome do projeto Compose fica consistente entre jobs).
+3. Espera `/health` responder 200 (retry loop curto), depois `docker compose --profile prod down -v`
+   (sempre, mesmo em falha).
+
+**Job `publish`** (`needs: [build, smoke-test]`, só `if: github.ref == 'refs/heads/main'`):
+1. Baixa o mesmo artifact, `docker load`.
+2. Login no GHCR com `docker/login-action` usando `secrets.GITHUB_TOKEN` (token automático do
    próprio Actions — **não precisa criar nenhum secret novo**, só declarar
    `permissions: packages: write` no job).
-6. Tag e push da imagem `api` como `ghcr.io/<owner>/<repo>:latest` e
-   `ghcr.io/<owner>/<repo>:<sha curto>` — só executa esse passo `if: github.ref == 'refs/heads/main'`.
+3. `docker push` da imagem `api` como `ghcr.io/<owner>/<repo>:<sha curto>`, depois tag e push como
+   `:latest`.
+
+**Job `dispatch`** (`needs: [build, publish]`, só `if: github.ref == 'refs/heads/main'`):
+1. `curl` autenticado com `secrets.DEPLOY_DISPATCH_TOKEN` que dispara um `repository_dispatch`
+   (`event_type: api-published`, payload com a tag `:sha` publicada) no repo
+   `sistema-controle-despesas-deploy`. Esse repo orquestrador roda o e2e contra essa tag exata e,
+   se passar, re-taggeia a imagem como `:stable`.
 
 ### 12.5 Em aberto / a confirmar quando eu escrever os arquivos
 
