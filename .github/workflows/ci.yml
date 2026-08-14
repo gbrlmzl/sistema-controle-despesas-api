@@ -88,7 +88,10 @@ jobs:
       - name: Salvar imagens (api + migrate) para os próximos jobs
         run: |
           mkdir -p /tmp/images
-          docker save $(docker compose --profile prod config --images migrate api) -o /tmp/images/app-images.tar
+          docker save \
+            "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}" \
+            "${{ steps.meta.outputs.image }}-migrate:${{ steps.meta.outputs.sha_tag }}" \
+            -o /tmp/images/app-images.tar
 
       - name: Upload das imagens como artifact
         uses: actions/upload-artifact@v4

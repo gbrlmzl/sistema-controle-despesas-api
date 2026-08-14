@@ -496,7 +496,7 @@ Um arquivo único, com `profiles:` do próprio compose (não dois arquivos) — 
 | Serviço | Perfis | Build target | Papel |
 | :---- | :---- | :---- | :---- |
 | `postgres` | `dev`, `prod` | — (imagem `postgres:17-alpine`, oficial — o problema de musl é só do `bcrypt`, não afeta o Postgres) | Banco, com healthcheck `pg_isready` e volume nomeado para persistir dados |
-| `migrate` | `dev`, `prod` | `build` (estágio intermediário do Dockerfile, com Prisma CLI) | Roda `npx prisma migrate deploy` uma vez e sai; `api-dev`/`api` esperam ele terminar com sucesso (`depends_on: condition: service_completed_successfully`) |
+| `migrate` | `dev`, `prod` | `build` (estágio intermediário do Dockerfile, com Prisma CLI) | Roda `npx prisma migrate deploy` uma vez e sai; `api-dev`/`api` esperam ele terminar com sucesso (`depends_on: condition: service_completed_successfully`). Tem `image: ${API_IMAGE}-migrate:${IMAGE_TAG}` explícito (adicionado em 2026-08-14) — sem isso o Compose auto-gera um nome que o job `build` do CI não conseguia resolver de forma confiável pra passar adiante via `docker save`/`docker load` (12.4) |
 | `api-dev` | `dev` | `build` (estágio intermediário, tem `tsx`) | `npm run dev` (tsx watch), monta `./src` como volume pra hot-reload, usa o `.env` local |
 | `api` | `prod` | `runtime` (estágio final, enxuto) | A imagem de produção de verdade — a mesma que o CI builda e publica no GHCR (12.4) |
 
@@ -531,9 +531,14 @@ Uso pretendido:
 1. Gera um `.env` mínimo (só `API_IMAGE`/`IMAGE_TAG`, o necessário pro compose resolver o nome da
    imagem) e roda `docker compose --profile prod build` (builda `migrate` e `api` a partir do
    mesmo `docker-compose.yml` do 12.3).
-2. `docker save` das duas imagens (`migrate` + `api`, resolvidas via `docker compose ... images -q`
-   — não hardcoda o nome auto-gerado do serviço `migrate`) num único tar, subido como artifact
-   (`actions/upload-artifact`) pros próximos jobs.
+2. `docker save` das duas imagens (`api`: `${API_IMAGE}:${IMAGE_TAG}`; `migrate`:
+   `${API_IMAGE}-migrate:${IMAGE_TAG}`) num único tar, subido como artifact
+   (`actions/upload-artifact`) pros próximos jobs. Nomes referenciados de forma explícita —
+   tentativas anteriores usando `docker compose images -q` (que só lista imagens de containers já
+   criados, não de imagens recém-buildadas) e `docker compose config --images` (que não resolvia o
+   nome do serviço `migrate` de forma confiável, por ele não ter `image:` explícito) falharam no
+   CI. Por isso o `migrate` ganhou um `image:` explícito no `docker-compose.yml` (12.3), igual ao
+   `api`.
 
 **Job `smoke-test`** (`needs: build`; roda em todo push e PR):
 1. Baixa o artifact, `docker load` das imagens.
