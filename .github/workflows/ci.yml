@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sistema_despesas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sistema_despesas_test
+      FRONTEND_URL: http://localhost:3000
+      JWT_EXPIRES_IN: 15m
+      REFRESH_TOKEN_EXPIRES_IN: 7d
+      # Variáveis do Google OAuth ficam de fora de propósito — env.ts trata a ausência das 4
+      # juntas como "login com Google desabilitado", não como erro (ver seção 5 do plano).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar segredo efêmero do JWT (só para este job)
+        run: echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Aplicar migrations no Postgres de serviço
+        run: npx prisma migrate deploy
+
+      - name: Build (prisma generate + tsc)
+        run: npm run build
+
+      - name: Testes (unitário + integração)
+        run: npm test
+
+  docker:
+    name: Build e publish da imagem (GHCR)
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Definir nome e tag da imagem
+        id: meta
+        run: |
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          SHA_TAG="${GITHUB_SHA::12}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=$SHA_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Gerar .env efêmero para o smoke test (perfil prod)
+        run: |
+          cat <<EOF > .env
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=sistema_despesas_ci
+          PORT=3001
+          FRONTEND_URL=http://localhost:3000
+          JWT_SECRET=$(openssl rand -hex 32)
+          JWT_EXPIRES_IN=15m
+          REFRESH_TOKEN_EXPIRES_IN=7d
+          API_IMAGE=${{ steps.meta.outputs.image }}
+          IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}
+          EOF
+
+      - name: Build da imagem (docker compose --profile prod)
+        run: docker compose --profile prod build
+
+      - name: Subir a stack e aguardar /health
+        run: |
+          docker compose --profile prod up -d
+          for i in $(seq 1 15); do
+            if curl -fs "http://localhost:${PORT:-3001}/health"; then
+              echo "API respondeu OK"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API não respondeu em tempo — logs:" >&2
+          docker compose --profile prod logs
+          exit 1
+
+      - name: Derrubar a stack
+        if: always()
+        run: docker compose --profile prod down -v
+
+      - name: Login no GHCR
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publicar imagem no GHCR (:sha e :latest)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker compose --profile prod push api
+          docker tag "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}" "${{ steps.meta.outputs.image }}:latest"
+          docker push "${{ steps.meta.outputs.image }}:latest"

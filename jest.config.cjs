@@ -17,4 +17,6 @@ module.exports = {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   testMatch: ['<rootDir>/tests/**/*.test.ts'],
+  collectCoverageFrom: ['src/**/*.ts', '!src/generated/**', '!src/types/**'],
+  coverageDirectory: '<rootDir>/coverage',
 };

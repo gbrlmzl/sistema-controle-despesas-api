@@ -42,6 +42,23 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+describe('GET /users/me', () => {
+  it('rejeita requisição sem autenticação', async () => {
+    const response = await request(app).get('/users/me');
+    expect(response.status).toBe(401);
+  });
+
+  it('devolve o usuário autenticado com hasPassword=true para conta local', async () => {
+    const user = await registerUser('Consulta Perfil');
+    const response = await user.agent.get('/users/me');
+
+    expect(response.status).toBe(200);
+    expect(response.body.user).toMatchObject({ id: user.id, username: user.username, email: user.email });
+    expect(response.body.user.password).toBeUndefined();
+    expect(response.body.user.hasPassword).toBe(true);
+  });
+});
+
 describe('PATCH /users/me (perfil)', () => {
   it('rejeita requisição sem autenticação', async () => {
     const response = await request(app).patch('/users/me').send({ avatar: AVATARS[0] });

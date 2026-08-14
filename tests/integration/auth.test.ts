@@ -4,7 +4,7 @@ import express from 'express';
 import request from 'supertest';
 import app from '../../src/app.js';
 import prisma from '../../src/config/prisma.js';
-import { requireAuth } from '../../src/middlewares/auth.js';
+import { REFRESH_COOKIE_NAME, requireAuth } from '../../src/middlewares/auth.js';
 
 const TEST_EMAIL_DOMAIN = 'auth-integration-test.example.com';
 
@@ -48,7 +48,7 @@ describe('POST /auth/register', () => {
     expect(response.body.user).toMatchObject({ email: body.email, username: body.username });
     expect(response.body.user.password).toBeUndefined();
     expect(getSetCookie(response, 'JWT')).toBeDefined();
-    expect(getSetCookie(response, 'refreshToken')).toBeDefined();
+    expect(getSetCookie(response, REFRESH_COOKIE_NAME)).toBeDefined();
   });
 
   it('rejeita corpo inválido (senha curta) com 400', async () => {
@@ -81,7 +81,7 @@ describe('POST /auth/login', () => {
     expect(response.status).toBe(200);
     expect(response.body.user.username).toBe(body.username);
     expect(getSetCookie(response, 'JWT')).toBeDefined();
-    expect(getSetCookie(response, 'refreshToken')).toBeDefined();
+    expect(getSetCookie(response, REFRESH_COOKIE_NAME)).toBeDefined();
   });
 
   it('rejeita senha errada com 401', async () => {
@@ -111,7 +111,7 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
     const response = await agent.post('/auth/register').send(validRegisterBody());
 
     expect(response.status).toBe(201);
-    const cookie = getSetCookie(response, 'refreshToken');
+    const cookie = getSetCookie(response, REFRESH_COOKIE_NAME);
     expect(cookie).toBeDefined();
     firstRefreshToken = cookieValue(cookie!);
   });
@@ -120,20 +120,20 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
     const response = await agent.post('/auth/refresh');
 
     expect(response.status).toBe(200);
-    const cookie = getSetCookie(response, 'refreshToken');
+    const cookie = getSetCookie(response, REFRESH_COOKIE_NAME);
     expect(cookie).toBeDefined();
     secondRefreshToken = cookieValue(cookie!);
     expect(secondRefreshToken).not.toBe(firstRefreshToken);
   });
 
   it('rejeita o token antigo já rotacionado (reuso) com 401', async () => {
-    const response = await request(app).post('/auth/refresh').set('Cookie', [`refreshToken=${firstRefreshToken}`]);
+    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${firstRefreshToken}`]);
 
     expect(response.status).toBe(401);
   });
 
   it('reuso detectado revoga a família inteira — o token mais novo também para de funcionar', async () => {
-    const response = await request(app).post('/auth/refresh').set('Cookie', [`refreshToken=${secondRefreshToken}`]);
+    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${secondRefreshToken}`]);
 
     expect(response.status).toBe(401);
   });
@@ -145,14 +145,14 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
   });
 
   it('rejeita valor de cookie inválido/aleatório', async () => {
-    const response = await request(app).post('/auth/refresh').set('Cookie', ['refreshToken=valor-que-nunca-existiu']);
+    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=valor-que-nunca-existiu`]);
 
     expect(response.status).toBe(401);
   });
 
   it('rejeita um refresh token expirado (mas ainda não revogado)', async () => {
     const registerResponse = await request(app).post('/auth/register').send(validRegisterBody());
-    const refreshCookie = getSetCookie(registerResponse, 'refreshToken')!;
+    const refreshCookie = getSetCookie(registerResponse, REFRESH_COOKIE_NAME)!;
     const rawToken = cookieValue(refreshCookie);
 
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -170,18 +170,18 @@ describe('POST /auth/logout', () => {
 
     expect(response.status).toBe(200);
     expect(getSetCookie(response, 'JWT')).toMatch(/^JWT=;/);
-    expect(getSetCookie(response, 'refreshToken')).toMatch(/^refreshToken=;/);
+    expect(getSetCookie(response, REFRESH_COOKIE_NAME)).toMatch(new RegExp(`^${REFRESH_COOKIE_NAME}=;`));
   });
 
   it('revoga o refresh token — não pode ser reaproveitado depois do logout', async () => {
     const registerResponse = await request(app).post('/auth/register').send(validRegisterBody());
-    const refreshCookie = getSetCookie(registerResponse, 'refreshToken')!;
+    const refreshCookie = getSetCookie(registerResponse, REFRESH_COOKIE_NAME)!;
     const rawToken = cookieValue(refreshCookie);
 
     const logoutResponse = await request(app).post('/auth/logout').set('Cookie', [refreshCookie]);
     expect(logoutResponse.status).toBe(200);
 
-    const refreshAttempt = await request(app).post('/auth/refresh').set('Cookie', [`refreshToken=${rawToken}`]);
+    const refreshAttempt = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
     expect(refreshAttempt.status).toBe(401);
   });
 });

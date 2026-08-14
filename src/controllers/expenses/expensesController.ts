@@ -6,6 +6,7 @@ import {
   createExpense,
   deleteExpense,
   editExpense,
+  getResidenceCompetencies,
   getResidenceExpenses,
   getUserRecurringExpenses,
   reopenMonth,
@@ -124,6 +125,16 @@ export async function listRecurring(req: Request, res: Response, next: NextFunct
   try {
     const user = currentUser(req);
     const result = await getUserRecurringExpenses(codeParam(req), user.id, parseCompetencyQuery(req));
+    res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listCompetencies(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = currentUser(req);
+    const result = await getResidenceCompetencies(codeParam(req), user.id);
     res.status(200).json(result);
   } catch (err) {
     next(err);

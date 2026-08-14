@@ -293,6 +293,39 @@ export async function getUserRecurringExpenses(code: string, userId: number, req
   return { competency, expenses };
 }
 
+export interface CompetencyStatus extends Competency {
+  isClosed: boolean;
+}
+
+//Alimenta o seletor de competência do front: só as competências com pelo menos uma
+//despesa não excluída, com o status de fechamento de cada uma. Uma única query
+//agregada (groupBy) sobre Expense, cruzada com os fechamentos da residência —
+//nunca um loop mês a mês.
+export async function getResidenceCompetencies(code: string, userId: number): Promise<CompetencyStatus[]> {
+  const context = await loadUserResidenceContext(code, userId);
+
+  const [competencies, closures] = await Promise.all([
+    prisma.expense.groupBy({
+      by: ['month', 'year'],
+      where: { residenceId: context.residence.id, deletedAt: null },
+    }),
+    prisma.monthClosure.findMany({
+      where: { residenceId: context.residence.id },
+      select: { month: true, year: true },
+    }),
+  ]);
+
+  const closedKeys = new Set(closures.map((closure) => `${closure.year}-${closure.month}`));
+
+  return competencies
+    .map((competency) => ({
+      month: competency.month,
+      year: competency.year,
+      isClosed: closedKeys.has(`${competency.year}-${competency.month}`),
+    }))
+    .sort((a, b) => b.year - a.year || b.month - a.month);
+}
+
 //FEAT-025 -> ao fechar o mês, as despesas marcadas como recorrentes são recriadas
 //na competência seguinte. É o gatilho possível sem agendador no projeto.
 async function generateRecurringExpenses(residenceId: number, origin: Competency, destination: Competency): Promise<number> {

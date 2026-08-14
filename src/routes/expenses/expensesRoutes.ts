@@ -6,6 +6,7 @@ import {
   closeMonthHandler,
   create,
   list,
+  listCompetencies,
   listRecurring,
   remove,
   reopenMonthHandler,
@@ -24,6 +25,7 @@ router.delete('/:code/expenses/:expenseId', remove);
 router.delete('/:code/expenses/:expenseId/recurrence', stopRecurrence);
 
 router.get('/:code/expenses/recurring', listRecurring);
+router.get('/:code/expenses/competencies', listCompetencies);
 
 router.post('/:code/expenses/month-closures', validateBody(monthClosureSchema), closeMonthHandler);
 router.delete('/:code/expenses/month-closures/:period', reopenMonthHandler);
