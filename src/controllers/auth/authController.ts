@@ -13,7 +13,15 @@ import {
   type AuthUser,
 } from '../../services/auth/authService.js';
 
-const REFRESH_COOKIE_PATH = '/auth';
+// '/', não '/auth': o front-end (Next.js) chama esse endpoint via um rewrite
+// same-origin ('/api/auth/refresh', ver next.config.ts), então o navegador só
+// enxerga o path '/api/...' — nunca '/auth/...' de verdade — e um cookie
+// restrito a '/auth' nunca seria anexado a essa chamada. O middleware de rota
+// do front (src/proxy.ts) também precisa lê-lo em requisições de página
+// ('/dashboard/*', '/login' etc.), que tampouco começam com '/auth'. HttpOnly
+// já impede leitura via JS; Path aqui não adiciona proteção real, só quebrava
+// o próprio mecanismo de refresh.
+const REFRESH_COOKIE_PATH = '/';
 
 function setAccessTokenCookie(res: Response, token: string): void {
   res.cookie(AUTH_COOKIE_NAME, token, {
@@ -28,10 +36,15 @@ function setRefreshTokenCookie(res: Response, token: string): void {
   res.cookie(REFRESH_COOKIE_NAME, token, {
     httpOnly: true,
     secure: env.NODE_ENV === 'production',
-    // 'strict' (não 'lax'): o refresh token só sai em requisições same-site de
-    // verdade — é o cookie de maior valor da API, não precisa sobreviver
-    // navegação cross-site vinda de outro domínio.
-    sameSite: 'strict',
+    // 'lax', não 'strict': googleCallback também emite esse cookie, e o
+    // navegador chega lá por um redirect de topo iniciado num site diferente
+    // (accounts.google.com) — um Set-Cookie 'strict' nesse contexto é
+    // descartado silenciosamente (confirmado: o JWT, que já é 'lax', sobrevive
+    // ao mesmo redirect; só o refresh token com 'strict' sumia). 'lax' ainda
+    // protege contra CSRF de verdade (POST/fetch/XHR cross-site continuam sem
+    // enviar o cookie); só permite navegação de topo por GET, que é
+    // exatamente o que esse redirect é.
+    sameSite: 'lax',
     path: REFRESH_COOKIE_PATH,
     maxAge: ms(env.REFRESH_TOKEN_EXPIRES_IN as ms.StringValue),
   });
@@ -74,8 +87,8 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
   }
 }
 
-// Troca um refresh token válido (cookie, escopado a /auth) por um novo par de
-// tokens. Ver auth.service.ts#rotateRefreshToken pra rotação + detecção de reuso.
+// Troca um refresh token válido (cookie) por um novo par de tokens. Ver
+// auth.service.ts#rotateRefreshToken pra rotação + detecção de reuso.
 export async function refresh(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const token = req.cookies?.[REFRESH_COOKIE_NAME];

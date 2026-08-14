@@ -3,9 +3,7 @@ import { getUserById, verifyToken } from '../services/auth/authService.js';
 import { AppError } from '../utils/AppError.js';
 
 export const AUTH_COOKIE_NAME = 'JWT';
-// Cookie do refresh token — escopado a /auth via `path` (ver auth.controller.ts),
-// então só é enviado nas próprias rotas de auth, nunca no resto da API.
-export const REFRESH_COOKIE_NAME = 'refreshToken';
+export const REFRESH_COOKIE_NAME = 'REFRESH';
 
 function extractToken(req: Request): string | null {
   const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
