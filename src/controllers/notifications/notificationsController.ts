@@ -7,6 +7,11 @@ function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;
 }
 
+//SEC-07 -> Teto do tamanho de página. Sem ele, ?limit=1000000 vira take: 1000000
+//direto no Postgres: uma requisição autenticada e aparentemente legítima que trava
+//uma conexão do banco e estoura a memória do processo ao serializar o JSON.
+const MAX_PAGE_SIZE = 100;
+
 //page/limit são opcionais: quando ausentes, o service usa a página 1 e o tamanho
 //padrão (RN-040).
 function parsePaginationQuery(req: Request): { page?: number; limit?: number } {
@@ -23,8 +28,8 @@ function parsePaginationQuery(req: Request): { page?: number; limit?: number } {
 
   if (limit !== undefined) {
     const parsedLimit = Number(limit);
-    if (!Number.isInteger(parsedLimit) || parsedLimit < 1) {
-      throw new AppError(400, 'Limite inválido.');
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > MAX_PAGE_SIZE) {
+      throw new AppError(400, `Limite inválido. Informe um valor entre 1 e ${MAX_PAGE_SIZE}.`);
     }
     result.limit = parsedLimit;
   }
