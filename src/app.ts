@@ -6,8 +6,11 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env, googleAuthEnabled } from './config/env.js';
 import passport from './config/passport.js';
+import prisma from './config/prisma.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { globalLimiter } from './middlewares/rateLimit.js';
+import { logError } from './utils/logger.js';
+import { createReadinessHandler } from './utils/readiness.js';
 import authRoutes from './routes/auth/authRoutes.js';
 import residencesRoutes from './routes/residences/residencesRoutes.js';
 import expensesRoutes from './routes/expenses/expensesRoutes.js';
@@ -64,6 +67,17 @@ app.get('/health', (_req: Request, res: Response) => {
 // SEC-01 -> Teto geral por IP. Os limites mais duros das rotas de auth ficam nas
 // próprias rotas (ver routes/auth/authRoutes.ts).
 app.use(globalLimiter);
+
+// SEC-17 -> Readiness, com banco. Fica DEPOIS do limitador global, ao contrário do
+// /health: esta rota custa um round trip no Postgres, então não pode ficar aberta pra
+// ser martelada. O probe do container chega pela loopback (sem X-Forwarded-For), que é
+// um balde de rate limit separado do de qualquer cliente vindo pelo ALB — e 2 chamadas
+// por minuto não chegam perto do teto.
+//
+// O que impede exposição pública de verdade não é isto, é o ALB não rotear /ready pro
+// target group (ver SEC-17 na seção 4 do documento). O limitador aqui é só a segunda
+// camada, pro caso de alguém rotear sem pensar.
+app.get('/ready', createReadinessHandler({ ping: () => prisma.$queryRaw`SELECT 1`, logError }));
 
 app.use(cors({ credentials: true, origin: env.FRONTEND_URL }));
 // SEC-11 -> O default do express.json() já é 100kb, mas deixar explícito documenta a
