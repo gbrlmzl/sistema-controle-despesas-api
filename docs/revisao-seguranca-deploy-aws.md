@@ -2,8 +2,11 @@
 
 > **Status:** bloco 1 ("antes do ECR") **aplicado e verificado** em 17/08/2026 — SEC-01, SEC-02,
 > SEC-04, SEC-05, SEC-07, SEC-08, SEC-11 e SEC-16, mais a metade de logging do SEC-10.
-> Os demais itens seguem como proposta aguardando aprovação. Ver a seção 6 para o que falta.
-> **Data:** 17/08/2026
+> Bloco 2 (itens que dependem **só de código**) **aplicado e verificado** em 18/08/2026 —
+> SEC-06, SEC-09, SEC-12 e a metade que faltava do SEC-10.
+> O que resta depende de console AWS ou de esteira (SEC-13/SEC-20). O SEC-15 foi avaliado e
+> **fechado por decisão** — o cost do bcrypt fica em 10. Ver a seção 6 para o recorte exato.
+> **Data:** 17/08/2026 · **Última atualização:** 18/08/2026
 > **Escopo:** todo o código de `src/`, `prisma/schema.prisma`, `Dockerfile`, `docker-compose.yml` e `.github/workflows/ci.yml`.
 
 ## 1. Premissas desta revisão
@@ -51,7 +54,8 @@ Severidade: 🔴 crítico (não subir sem isso) · 🟠 alto (corrigir antes do 
 
 ### Aplicação
 
-✅ = já aplicado e verificado · ⚠️ = aplicado pela metade (ver detalhe na seção 4)
+✅ = já aplicado e verificado (ver o "como ficou" do item na seção 4) · 🚫 = avaliado e
+**deliberadamente não aplicado** (a decisão e o porquê estão na seção 4) · sem marca = ainda pendente
 
 | # | Problema | Onde | Sev | Solução |
 | --- | --- | --- | :-: | --- |
@@ -60,18 +64,18 @@ Severidade: 🔴 crítico (não subir sem isso) · 🟠 alto (corrigir antes do 
 | SEC-03 | **Segredos como variável de ambiente em texto plano.** `docker-compose.yml` usa `env_file: .env`; replicar isso no ECS deixa `JWT_SECRET` e `DATABASE_URL` legíveis na task definition | [docker-compose.yml](docker-compose.yml) | 🔴 | Usar o bloco `secrets:` da task definition, apontando pro SSM Parameter Store (SecureString) |
 | SEC-04 ✅ | **Resposta 500 devolve a mensagem interna do erro** ao cliente. Um erro do Prisma expõe nome de tabela, coluna e constraint | [errorHandler.ts:17](src/middlewares/errorHandler.ts#L17) | 🟠 | Em produção, sempre `'Erro interno do servidor.'`; o detalhe só vai pro log |
 | SEC-05 ✅ | **Sem cabeçalhos de segurança.** Sem HSTS, sem `X-Content-Type-Options`, e o `X-Powered-By: Express` entrega a stack | [src/app.ts](src/app.ts) | 🟠 | `helmet()` com HSTS habilitado (faz sentido assim que houver HTTPS) |
-| SEC-06 | **Trocar a senha não derruba as sessões existentes.** Um refresh token roubado sobrevive à troca de senha por até 7 dias | [usersService.ts:60](src/services/users/usersService.ts#L60) | 🟠 | Revogar todos os `RefreshToken` do usuário e reemitir o par de tokens da sessão atual |
+| SEC-06 ✅ | **Trocar a senha não derruba as sessões existentes.** Um refresh token roubado sobrevive à troca de senha por até 7 dias | [usersService.ts:60](src/services/users/usersService.ts#L60) | 🟠 | Revogar todos os `RefreshToken` do usuário e reemitir o par de tokens da sessão atual |
 | SEC-07 ✅ | **Paginação e arrays sem teto.** `GET /notifications?limit=1000000` vira `take: 1000000`; `PATCH /notifications` com 100 mil ids vira um `IN (...)` gigante | [notificationsController.ts:26](src/controllers/notifications/notificationsController.ts#L26), [notificacoes.ts:8](src/schemas/notificacoes.ts#L8) | 🟠 | `limit` com teto de 100; array `ids` com `.max(200)` |
 | SEC-08 ✅ | **Sem tratamento de `SIGTERM`.** Todo deploy do ECS mata requisições em voo e deixa conexões do Postgres penduradas | [server.ts:14](src/server.ts#L14) | 🟠 | `server.close()` + `prisma.$disconnect()` com timeout de guarda |
-| SEC-09 | **Refresh tokens expirados nunca são apagados.** Cada refresh cria uma linha nova; ~96 linhas por usuário por dia com access token de 15 min | [schema.prisma](prisma/schema.prisma) | 🟡 | Limpeza periódica das linhas expiradas há mais de 30 dias |
-| SEC-10 ⚠️ | **Nenhum evento de segurança é logado.** Login falho, reuso de refresh token detectado e bloqueio por rate limit passam invisíveis. Sem isso você não enxerga um ataque no CloudWatch | [logger.ts](src/utils/logger.ts), [app.ts:21](src/app.ts#L21) | 🟡 | Log estruturado (JSON) desses eventos + `morgan('combined')` em produção |
+| SEC-09 ✅ | **Refresh tokens expirados nunca são apagados.** Cada refresh cria uma linha nova; ~96 linhas por usuário por dia com access token de 15 min | [schema.prisma](prisma/schema.prisma) | 🟡 | Limpeza periódica das linhas expiradas há mais de 30 dias |
+| SEC-10 ✅ | **Nenhum evento de segurança é logado.** Login falho, reuso de refresh token detectado e bloqueio por rate limit passam invisíveis. Sem isso você não enxerga um ataque no CloudWatch | [logger.ts](src/utils/logger.ts), [app.ts:21](src/app.ts#L21) | 🟡 | Log estruturado (JSON) desses eventos + `morgan('combined')` em produção |
 | SEC-11 ✅ | **Limite de corpo implícito.** `express.json()` usa o default de 100 kB — razoável, mas invisível e frágil a uma mudança futura | [app.ts:25](src/app.ts#L25) | 🟡 | `express.json({ limit: '32kb' })` — nenhum endpoint precisa de mais |
-| SEC-12 | **JWT sem `issuer` e `audience`.** Um token assinado por outro sistema que compartilhe o segredo seria aceito | [authService.ts:158](src/services/auth/authService.ts#L158) | 🟡 | Adicionar `issuer`/`audience` na assinatura e exigi-los na verificação |
+| SEC-12 ✅ | **JWT sem `issuer` e `audience`.** Um token assinado por outro sistema que compartilhe o segredo seria aceito | [authService.ts:158](src/services/auth/authService.ts#L158) | 🟡 | Adicionar `issuer`/`audience` na assinatura e exigi-los na verificação |
 | SEC-13 | **Imagem base por tag mutável e sem scan.** `node:24-bookworm-slim` muda de conteúdo sem aviso | [Dockerfile](Dockerfile) | 🟡 | Pinar por digest + `scanOnPush` no ECR + step do Trivy no CI |
 | SEC-14 | **Enumeração de usuários.** `/auth/register` responde 409 distinguindo email de username já usados; `/residences/:code/invites` responde 404 se o username não existe | [authService.ts:41](src/services/auth/authService.ts#L41) | 🟡 | Não dá pra eliminar sem estragar a UX — o que torna isso inexplorável é o rate limit do SEC-01 |
-| SEC-15 | **bcrypt com cost 10.** Aceitável hoje, mas subir pra 12 dificulta 4× o crack offline | [authService.ts:11](src/services/auth/authService.ts#L11) | 🟡 | Subir para 12 **depois** do SEC-01 — antes dele, piora o DoS por CPU |
+| SEC-15 🚫 | **bcrypt com cost 10.** Aceitável hoje, mas subir pra 12 dificulta 4× o crack offline | [authService.ts:12](src/services/auth/authService.ts#L12), [usersService.ts:6](src/services/users/usersService.ts#L6) | 🟡 | **Decidido em 18/08/2026: fica em 10.** Medição e justificativa na seção 4.6 |
 | SEC-16 ✅ | **`failureRedirect` aponta pra uma rota da API que não existe.** Falha no login Google redireciona pra `/auth/login`, que responde 404 | [authRoutes.ts:22](src/routes/auth/authRoutes.ts#L22) | ⚪ | Redirecionar pra `${FRONTEND_URL}/login?error=oauth` |
-| SEC-17 | **`/health` não distingue liveness de readiness.** Não toca o banco, então o ECS acha a task saudável com o Postgres fora do ar | [app.ts:43](src/app.ts#L43) | ⚪ | Manter `/health` barato pro ALB e adicionar `/ready` (com banco), não exposto publicamente |
+| SEC-17 ✅ | **`/health` não distingue liveness de readiness.** Não toca o banco, então o ECS acha a task saudável com o Postgres fora do ar | [app.ts:43](src/app.ts#L43) | ⚪ | Manter `/health` barato pro ALB e adicionar `/ready` (com banco), não exposto publicamente |
 | SEC-18 | **`uncaughtException` mata o processo.** Correto em princípio, mas com o ECS reiniciando significa que qualquer bug alcançável por requisição vira loop de restart | [server.ts:5](src/server.ts#L5) | ⚪ | Manter o comportamento; o rate limit do SEC-01 é o que fecha essa porta |
 | SEC-19 | **`HEALTHCHECK` do Dockerfile é implícito.** Melhor declarar o health check explicitamente na task definition do que depender do que a imagem carrega | [Dockerfile](Dockerfile) | ⚪ | Declarar `healthCheck` na task definition; lembrar que o do target group do ALB é outro, separado |
 | SEC-20 | **O CI publica no GHCR, não no ECR.** O pipeline atual não te leva ao destino que você quer | [ci.yml](.github/workflows/ci.yml) | ⚪ | Adicionar job de push pro ECR via OIDC (sem access key de longa duração) |
@@ -269,6 +273,17 @@ res.status(200).json({ user: updated });
 
 `establishSession` hoje é privada do `authController`. A correção envolve exportá-la ou mover pra um módulo compartilhado — decisão de organização, não de segurança.
 
+**Como ficou (aplicado em 18/08/2026).** Os helpers de cookie de sessão saíram do `authController`
+para [src/lib/session.ts](src/lib/session.ts): `setAccessTokenCookie`, `setRefreshTokenCookie`,
+`clearSessionCookies` e `establishSession`. A alternativa (exportar do `authController`) faria o
+`usersController` importar outro controller, invertendo a direção normal das dependências —
+e o que está sendo compartilhado é mecânica de transporte, não regra de negócio.
+
+A ordem no controller não é cosmética: **revogar primeiro, emitir depois**. Invertida, o par novo
+nasceria e seria revogado na mesma requisição, e quem trocou a senha cairia junto com o invasor —
+o teste `reemite o par de tokens pro dispositivo que trocou a senha` existe pra travar isso, porque
+o sintoma ("troquei a senha e fui deslogado") convida alguém a remover a revogação inteira.
+
 #### SEC-09 — Refresh tokens expirados nunca são removidos
 
 Cada chamada a `/auth/refresh` insere uma linha e revoga a anterior. Nada é apagado. Com access token de 15 minutos, um usuário ativo gera ~96 linhas por dia, ~35 mil por ano. Com o rate limit do SEC-01 isso é só crescimento previsível; **sem** ele, é um vetor de encher o disco do banco.
@@ -291,6 +306,26 @@ export async function purgeExpiredRefreshTokens(): Promise<number> {
 ```
 
 **Como agendar, sem custo:** um `setInterval` diário dentro do processo é a opção de esforço zero, mas roda N vezes com N tasks. A alternativa limpa e ainda grátis no seu setup é uma **ECS Scheduled Task** (EventBridge disparando uma task que roda o comando e sai) — é o mesmo padrão que o serviço `migrate` do `docker-compose.yml` já usa. Recomendo a segunda.
+
+**Como ficou (aplicado em 18/08/2026).** O código entrega o executável, não o agendamento:
+
+- `purgeExpiredRefreshTokens()` em [authService.ts](src/services/auth/authService.ts), com a janela
+  em `REFRESH_TOKEN_RETENTION_DAYS = 30`;
+- [src/scripts/purgeTokens.ts](src/scripts/purgeTokens.ts) → `dist/scripts/purgeTokens.js`: roda,
+  loga quantas linhas removeu e sai. Disponível como `npm run purge:tokens`;
+- [src/utils/tokenPurge.ts](src/utils/tokenPurge.ts) guarda o comportamento do invólucro (código de
+  saída, desconexão, log) com dependências injetadas — mesma razão de `utils/shutdown.ts` existir
+  separado de `server.ts`: importar o entrypoint num teste executaria a purga e mataria o processo
+  do Jest.
+
+O código de saída importa: **falha sai com 1**, inclusive quando só a desconexão falha. É o que faz
+a execução aparecer como falhada no ECS — uma limpeza que quebra em silêncio é pior que nenhuma.
+
+Falta só o agendamento no console: uma **ECS Scheduled Task** (EventBridge, `rate(1 day)`) usando a
+mesma imagem de runtime, com `command` sobrescrito para `["node", "dist/scripts/purgeTokens.js"]`.
+
+Verificado à mão contra o banco de dev: duas linhas com 40 dias inseridas, `npm run purge:tokens`
+respondendo `2 linha(s) removida(s)` e saindo com código 0.
 
 ### 4.4 Trabalho não limitado
 
@@ -377,6 +412,43 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 
 Combine isso com um **deregistration delay** de ~30s no target group do ALB, pra que o load balancer pare de mandar tráfego novo antes de o container começar a se despedir.
 
+#### SEC-17 — `/health` não distingue liveness de readiness
+
+São duas perguntas diferentes, e confundi-las faz o orquestrador tomar a decisão errada:
+
+| Sonda | Pergunta | Se a resposta for "não" |
+| --- | --- | --- |
+| Liveness (`/health`) | O processo está vivo? | Reiniciar a task resolve |
+| Readiness (`/ready`) | Dá pra atender requisição agora? | Tirar do balanceamento resolve — reiniciar **não** |
+
+O caso concreto que isso evita: o Postgres cai. Se `/health` consultasse o banco, ele começaria a
+falhar, o ECS mataria e recriaria a task, a task nova também não acharia o banco, e você teria um
+loop de restart enquanto o problema está em outro lugar — com o agravante de que cada restart perde
+as requisições em voo que o SEC-08 tinha acabado de proteger.
+
+**Como ficou (aplicado em 18/08/2026).** `/health` continua exatamente como estava: barato, sem
+banco, declarado antes do rate limiting pro health check do ALB nunca tomar 429. O novo `/ready`
+([src/utils/readiness.ts](src/utils/readiness.ts), montado em [app.ts](src/app.ts)) faz um
+`SELECT 1` e responde:
+
+- **200** `{ status: 'ready' }` quando o banco responde;
+- **503** `{ status: 'unavailable' }` quando não — 503 e não 500 de propósito, porque é o status que
+  significa "estou de pé, mas não me mande tráfego agora". Um 500 seria lido como bug da aplicação.
+
+A mensagem do erro nunca vai na resposta, só no log: é o mesmo raciocínio do SEC-04, e `/ready` é
+justamente o tipo de endpoint que um scanner encontra primeiro.
+
+Uma diferença de posicionamento que vale registrar: `/ready` fica **depois** do limitador global,
+ao contrário do `/health`. Ele custa um round trip no banco, então não pode ficar aberto pra ser
+martelado. O probe do container chega pela loopback, sem `X-Forwarded-For`, que é um balde de rate
+limit separado do de qualquer cliente vindo pelo ALB — duas chamadas por minuto não chegam perto do
+teto de 120. Ainda assim, **o que impede exposição pública de verdade é o ALB não rotear `/ready`
+pro target group**; o limitador é só a segunda camada.
+
+**O que falta, no console:** apontar o `healthCheck` da task definition pro `/ready` (é o SEC-19) e
+deixar o health check do target group do ALB no `/health`. São dois health checks diferentes e é
+proposital: o do ALB decide balanceamento, o da task decide restart.
+
 #### SEC-10 — Nenhum evento de segurança é logado
 
 Hoje, se alguém passar a madrugada tentando senhas na sua API, você não tem como saber. O `logError` só é chamado no `errorHandler` para erros **não previstos** — e um login falho é um `AppError`, ou seja, sai pelo caminho que não loga nada.
@@ -394,6 +466,52 @@ app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 ```
 
 Com o log estruturado em JSON no CloudWatch, você cria um **metric filter** (grátis) contando ocorrências de login falho e um **alarme** que te manda email quando passar de X por minuto. É o seu sistema de detecção de intrusão de custo zero — e a única forma de descobrir um ataque antes da fatura.
+
+**Como ficou (aplicado em 18/08/2026).** `logSecurityEvent` em [logger.ts](src/utils/logger.ts) emite
+uma linha por evento, sempre no mesmo formato:
+
+```json
+{"level":"security","event":"refresh_token_reuse","timestamp":"2026-08-18T13:49:01.358Z","ip":"203.0.113.44","userId":1847,"familyId":"ac51d50a-...","tokenHashPrefix":"38f3f1ce1ba9"}
+```
+
+Os três eventos e onde cada um mora:
+
+| Evento | Onde | Campos |
+| --- | --- | --- |
+| `refresh_token_reuse` | `rotateRefreshToken`, no ramo do `existing.revokedAt` | `ip`, `userId`, `familyId`, `tokenHashPrefix` |
+| `login_failed` | `loginWithCredentials`, nos dois ramos de falha | `ip`, `username`, `reason`, `userId` (quando o usuário existe) |
+| `rate_limit_exceeded` | opção `handler` do `buildLimiter` | `ip`, `limiter`, `method`, `path`, `limit` |
+
+**A decisão de desenho que este item exigia** era o IP: ele só existe no `req`, e a camada de serviço
+não recebe `req`. Empurrar o objeto inteiro para dentro dos services acoplaria regra de negócio ao
+Express. A saída foi um valor simples — `SecurityContext { ip?: string }` — que o controller monta e
+o service só repassa (`securityContext(req)` no `authController`).
+
+Com isso o log ficou no **service**, e não no controller, por um motivo que vale registrar: só lá
+dentro se sabe *qual* ramo falhou. A resposta HTTP continua indistinguível entre "usuário não existe"
+e "senha errada" (é o que impede enumeração), mas o log distingue `user_not_found` de
+`invalid_password` — muitos do primeiro no mesmo IP é varredura de usernames; muitos do segundo no
+mesmo username é força bruta de senha. São ataques diferentes, e a distinção não sobrevive a subir a
+decisão para o controller.
+
+O `rate_limit_exceeded` carrega o **nome do limitador** (`buildLimiter` passou a receber `name`)
+porque "429 em `/auth/login`" pode ser tanto o `loginLimiter` quanto o teto global, e o número
+significa coisas bem diferentes em cada caso. O `handler` customizado só registra o evento: status,
+mensagem e `Retry-After` continuam idênticos — o header é setado pela própria biblioteca antes de o
+handler rodar.
+
+**O que nunca entra no log:** a senha tentada e o valor do refresh token. Do token vai só o prefixo
+do hash (12 caracteres), que serve pra correlacionar a linha no banco e não serve pra reusar a
+credencial. Há teste dedicado pra cada uma dessas duas regras.
+
+**Silencioso em `NODE_ENV=test`**, pela mesma razão do `morgan` em `app.ts`: a suíte erra senha e
+estoura limite dezenas de vezes de propósito, e cada evento viraria um bloco de console no relatório
+do Jest. Os testes que precisam observar o log mutam `env.NODE_ENV` para `'production'` — o que
+exercita o caminho real de produção, não uma simulação dele.
+
+**Próximo passo, no console (grátis):** um metric filter por evento — `{ $.event = "login_failed" }`,
+`{ $.event = "refresh_token_reuse" }` — e um alarme em cima de cada um. O do `refresh_token_reuse`
+merece limiar 1: qualquer ocorrência é roubo de token confirmado, não ruído.
 
 ### 4.6 Itens menores, correções rápidas
 
@@ -418,7 +536,59 @@ jwt.verify(token, env.JWT_SECRET, {
 
 Note que `algorithms: ['HS256']` já está corretamente fixado na verificação — isso fecha a família de ataques de confusão de algoritmo (`alg: none`, troca pra RS256). Bom trabalho aí.
 
-**SEC-15 — bcrypt cost.** 10 está dentro do recomendado pela OWASP. Subir pra 12 quadruplica o custo de um ataque offline caso o banco vaze — mas **também quadruplica o custo de CPU de cada tentativa de login**, o que sem rate limiting piora o SEC-01 em 4×. Por isso a ordem importa: SEC-01 primeiro, SEC-15 depois.
+**Aplicado em 18/08/2026**, com os valores acima fixados em `JWT_ISSUER`/`JWT_AUDIENCE` no
+`authService`. **Consequência no deploy:** todo access token emitido *antes* desta subida passa a ser
+rejeitado, porque não carrega os dois claims. Isso se resolve sozinho e sem ninguém perceber — o
+refresh token é opaco (não é JWT, não passa por `verifyToken`) e continua válido, então o front
+renova o par em no máximo 15 minutos, que é o `JWT_EXPIRES_IN`. Não é preciso coordenar nada com o
+front nem invalidar sessões; o pior caso para um usuário é um 401 seguido do refresh automático.
+
+**SEC-15 — bcrypt cost. 🚫 Decidido em 18/08/2026: fica em 10.** Não é pendência, é escolha — e o
+raciocínio fica registrado aqui pra ninguém refazer a conta daqui a seis meses.
+
+10 está dentro do recomendado pela OWASP. Subir pra 12 quadruplica o custo de um ataque offline caso
+o banco vaze — mas **também quadruplica o custo de CPU de cada tentativa de login**. A proposta
+original era subir depois do SEC-01 (antes dele, pioraria o DoS por CPU em 4×). Com o rate limit já
+no lugar, o item destravou e foi então avaliado com número em vez de intuição.
+
+**Medição** (`bcrypt.compare`, máquina de desenvolvimento; numa `t3.small`/`t4g.small` espere de
+1,5× a 2,5× disso):
+
+| cost | hash | compare |
+| :-: | --: | --: |
+| 10 | 61 ms | 56 ms |
+| 11 | 111 ms | 108 ms |
+| 12 | 218 ms | 219 ms |
+
+**O caminho de ataque que decide a questão** não é o da força bruta. Login falho é capado em 8 por
+IP a cada 15 min, e username inexistente nem chega no bcrypt (`loginWithCredentials` sai antes),
+então saturar 2 vCPU por ali exige escala de botnet nos dois costs — ~1800 IPs a cost 10, ~500 a
+cost 12.
+
+O caminho que importa é o **login bem-sucedido**: `loginLimiter` usa `skipSuccessfulRequests: true`,
+de propósito (SEC-01), então sucesso não gasta cota e o único teto é o global de 120/min por IP.
+Com uma única conta válida — inclusive uma que o próprio atacante cadastre:
+
+| | CPU por IP, por minuto | IPs pra saturar 2 vCPU |
+| --- | --- | :-: |
+| cost 10 | ~14 s (0,24 vCPU) | ~8 |
+| cost 12 | ~54 s (0,90 vCPU) | **~3** |
+
+**E o ganho é menor do que o "4×" sugere**, por três motivos que se somam:
+
+1. Só existe se o banco de hashes vazar — cenário que o RDS privado (INFRA-03/04) e os segredos no
+   SSM (SEC-03) atacam de forma mais direta e mais barata.
+2. O cost é multiplicador linear contra uma grandeza exponencial: +2 de cost equivale a **2 bits**
+   de entropia de senha. Subir o mínimo de senha de 8 para 12 caracteres vale mais que os 4× e custa
+   zero de CPU.
+3. **Trocar a constante não re-hasheia ninguém.** O cost fica gravado dentro do hash, então todo
+   usuário existente permaneceria em 10 de qualquer forma. Alcançar a base exigiria re-hash no login
+   bem-sucedido (`bcrypt.getRounds(hash) < SALT_ROUNDS` → re-hash), que esta revisão não previu.
+
+**Se um dia isso for revisitado**, o momento é junto de uma instância maior, e o item cresce: cost
+11 em vez de 12, re-hash no login, e `SALT_ROUNDS` unificado — hoje ele está declarado em **dois**
+lugares (`authService.ts:12` para o registro e `usersService.ts:6` para a troca de senha), e mudar
+um só faria senha trocada nascer mais fraca que senha de cadastro, sem sintoma nenhum.
 
 **SEC-14 — Enumeração de usuários.** `/auth/register` distingue "email já existe" de "username já em uso", e `/residences/:code/invites` responde 404 quando o username não existe. As duas coisas são necessárias pra UX — o usuário precisa saber qual campo corrigir. O que torna isso inexplorável não é mudar a mensagem, é o rate limit: com 8 tentativas por 15 minutos, enumerar uma base de usuários leva anos. É por isso que este item está aqui embaixo e não no topo.
 
@@ -508,37 +678,60 @@ O gatilho pra reconsiderar: se você um dia migrar pro Fargate, ligar autoscalin
 7. ✅ SEC-11 — limite de corpo explícito em 32kb
 
 Levados junto por estarem nos mesmos arquivos: ✅ SEC-16 (`failureRedirect` do Google agora aponta
-pro front) e a metade fácil do ⚠️ SEC-10 (`morgan` em formato `combined` quando em produção — falta
-o log estruturado de eventos de segurança).
+pro front) e a metade fácil do SEC-10 (`morgan` em formato `combined` quando em produção — a outra
+metade, o log estruturado de eventos de segurança, veio no bloco 2 abaixo).
 
 Verificação: 209 testes passando (45 novos, ver seção 7), e o container de produção exercitado de verdade —
 9ª tentativa de login recebendo 429 com `Retry-After`, erro interno respondendo
 `"Erro interno do servidor."` com o `PrismaClientKnownRequestError` só no log, e `docker stop`
 encerrando em 0,6s com código 0 em vez de levar SIGKILL aos 30s.
 
-**Antes de apontar o domínio pro ambiente** (infra + sessão):
+**Bloco 2 — o que dependia só de código** — ✅ **concluído em 18/08/2026**:
 
-8. INFRA-02 — AWS Budgets *(console, 2 min)*
-9. INFRA-01 — teto do ASG / sem autoscaling *(console)*
-10. INFRA-03/04 — Security Groups e banco privado
-11. SEC-03 — segredos no SSM Parameter Store
-12. SEC-06 — revogar sessões na troca de senha
-13. INFRA-08 — ACM + redirect 80→443
+8. ✅ SEC-06 — troca de senha revoga todos os refresh tokens e reemite o par pro dispositivo atual
+9. ✅ SEC-10 — log estruturado dos três eventos de segurança (a metade que faltava)
+10. ✅ SEC-12 — `issuer`/`audience` assinados **e exigidos** na verificação
+11. ✅ SEC-09 — purga dos refresh tokens, entregue como executável (`npm run purge:tokens`)
+12. ✅ SEC-17 — `/ready` tocando o banco, com `/health` seguindo barato e sem banco
+
+Verificação: 252 testes passando (43 novos, ver seção 7), 18 regressões introduzidas de propósito e
+todas derrubando a suíte, `npm run build` limpo, e o entrypoint da purga exercitado contra o banco de
+dev (2 linhas antigas removidas, saída com código 0).
+
+Nenhum destes quatro precisa de console AWS pra funcionar. Dois deixam uma ponta lá, e só isso:
+o SEC-09 precisa da Scheduled Task pra rodar sozinho, e o SEC-10 precisa dos metric filters
+pra virar alarme.
+
+Isto **não** esgota o código: junto da esteira sobraram o SEC-13 (Dockerfile) e o SEC-20 (job de
+push pro ECR).
+
+E o SEC-15, que também era código, foi avaliado e fechado por decisão — ver a seção 4.6.
+
+**Antes de apontar o domínio pro ambiente** (infra):
+
+12. INFRA-02 — AWS Budgets *(console, 2 min)*
+13. INFRA-01 — teto do ASG / sem autoscaling *(console)*
+14. INFRA-03/04 — Security Groups e banco privado
+15. SEC-03 — segredos no SSM Parameter Store
+16. INFRA-08 — ACM + redirect 80→443
 
 **Nas semanas seguintes:**
 
-14. SEC-10 — logs de segurança + metric filter + alarme
-15. SEC-09 — limpeza de refresh tokens
-16. INFRA-05 — OIDC no CI + roles mínimas · SEC-20 — push pro ECR
-17. SEC-12, SEC-13, SEC-15, SEC-16, SEC-17, SEC-19 — o resto
+17. SEC-10 (console) — metric filters + alarmes em cima dos eventos que a aplicação já emite
+18. SEC-09 (console) — ECS Scheduled Task chamando `dist/scripts/purgeTokens.js`
+19. INFRA-05 — OIDC no CI + roles mínimas · SEC-20 — push pro ECR
+20. SEC-13, SEC-19 — o resto
 
-Os sete primeiros itens somam algo em torno de **60 linhas de código e duas dependências novas**. É pouco trabalho pro tanto de risco que fecham.
+🚫 **SEC-15 saiu da fila em 18/08/2026 por decisão, não por esquecimento:** o cost do bcrypt fica em
+10. A medição que sustenta isso está na seção 4.6.
+
+Os sete primeiros itens somam algo em torno de **60 linhas de código e duas dependências novas**. É pouco trabalho pro tanto de risco que fecham. O bloco 2 não trouxe dependência nenhuma.
 
 ---
 
 ## 7. Cobertura de testes das correções
 
-209 testes no total (45 novos). Os das correções de segurança:
+252 testes no total (88 novos: 45 no bloco 1, 43 no bloco 2). Os das correções de segurança:
 
 | Arquivo | Testes | Cobre |
 | --- | :-: | --- |
@@ -548,6 +741,14 @@ Os sete primeiros itens somam algo em torno de **60 linhas de código e duas dep
 | [tests/unit/shutdown.test.ts](tests/unit/shutdown.test.ts) | 7 | Encerramento: ordem (servidor antes do banco), idempotência, falha no close, falha no disconnect, estouro do tempo limite |
 | [tests/unit/errorHandler.test.ts](tests/unit/errorHandler.test.ts) | 9 | Produção não vaza a mensagem interna mas o log mantém o detalhe; ramos de 413 e 400 |
 | [tests/unit/notificacoes.schemas.test.ts](tests/unit/notificacoes.schemas.test.ts) | 7 | Teto de 200 ids |
+| [tests/integration/passwordChange.test.ts](tests/integration/passwordChange.test.ts) | 6 | **SEC-06**: outro dispositivo perde o refresh token, o token anterior do próprio dispositivo também morre, sobra exatamente 1 linha ativa no banco, o par é reemitido pra quem trocou, a sessão dele segue renovando e chamando rota autenticada, e uma troca **falhada** não revoga nada |
+| [tests/integration/securityEvents.test.ts](tests/integration/securityEvents.test.ts) | 9 | **SEC-10** pelo HTTP: login falho registra IP real e username, `user_not_found` distinto de `invalid_password`, login bem-sucedido não registra nada, reuso de refresh token registra `userId`/`familyId`, rotação legítima não registra, bloqueio registra o limitador que barrou — e as duas regras de sigilo: nunca a senha tentada, nunca o token cru |
+| [tests/integration/refreshTokenPurge.test.ts](tests/integration/refreshTokenPurge.test.ts) | 7 | **SEC-09** contra o banco real: apaga expirado e revogado além da janela, **preserva** token ativo, revogado ontem (é ele que detecta reuso) e expirado ontem, devolve a contagem, e é idempotente |
+| [tests/unit/logger.test.ts](tests/unit/logger.test.ts) | 5 | **SEC-10** formato: uma linha, JSON válido, chaves `level`/`event`/`timestamp`, detalhes no mesmo nível (pra `$.ip` funcionar em qualquer evento), username hostil escapado em vez de forjar uma linha falsa, silêncio em `NODE_ENV=test` |
+| [tests/unit/auth.service.test.ts](tests/unit/auth.service.test.ts) | +4 | **SEC-12**: token assinado com `iss`/`aud`, e rejeição de token bem assinado porém sem os claims, com outro issuer ou com outra audience |
+| [tests/unit/readiness.test.ts](tests/unit/readiness.test.ts) | 5 | **SEC-17**: 200 com o banco de pé, **503** (não 500) com o banco fora, mensagem do erro no log mas nunca na resposta, e o erro não escapando pro `errorHandler` |
+| [tests/integration/health.test.ts](tests/integration/health.test.ts) | +3 | **SEC-17** na fiação real: `/ready` consulta o banco de verdade, `/health` responde **sem** tocar nele (espionando `prisma.$queryRaw` nos dois casos) |
+| [tests/unit/tokenPurge.test.ts](tests/unit/tokenPurge.test.ts) | 4 | **SEC-09** invólucro: loga a contagem, desconecta sempre, sai com 1 se a purga falhar e sai com 1 se só a desconexão falhar |
 
 ### Por que existem dois arquivos de rate limit
 
@@ -574,6 +775,36 @@ refactor foram introduzidas de propósito e todas derrubaram a suíte:
 | Remover o limite explícito de corpo | 1 teste falha |
 | Voltar a vazar o erro interno em produção | 1 teste falha |
 
+O bloco 2 passou pelo mesmo crivo — 13 regressões, todas pegas:
+
+| Regressão simulada | Item | Resultado |
+| --- | :-: | --- |
+| Não revogar as outras sessões na troca de senha | SEC-06 | 3 testes falham |
+| Revogar mas não reemitir a sessão do dispositivo atual | SEC-06 | 3 testes falham |
+| Inverter a ordem (emitir antes de revogar) | SEC-06 | 2 testes falham |
+| Purgar só por `expiresAt`, ignorando os revogados | SEC-09 | 1 teste falha |
+| Purgar sem janela de retenção (apagar todo revogado) | SEC-09 | 2 testes falham |
+| Reuso de refresh token volta a ser silencioso | SEC-10 | 2 testes falham |
+| Login falho volta a ser silencioso | SEC-10 | 1 teste falha |
+| Rate limit volta ao handler padrão, sem log | SEC-10 | 1 teste falha |
+| Logar o token cru em vez do prefixo do hash | SEC-10 | 1 teste falha |
+| Perder o IP no caminho controller → service | SEC-10 | 2 testes falham |
+| Assinar com `iss`/`aud` mas não exigir na verificação | SEC-12 | 3 testes falham |
+| Parar de assinar com `iss`/`aud` | SEC-12 | 2 testes falham |
+| Logger volta a ficar mudo mesmo fora de `test` | SEC-10 | 4 testes falham |
+| `/ready` deixa de tocar o banco (vira um `/health` disfarçado) | SEC-17 | 1 teste falha |
+| `/health` passa a consultar o banco | SEC-17 | 1 teste falha |
+| Banco fora do ar responde 500 em vez de 503 | SEC-17 | 1 teste falha |
+| Vazar a mensagem do erro do banco na resposta | SEC-17 | 2 testes falham |
+| Deixar o erro escapar pro `errorHandler` | SEC-17 | 4 testes falham |
+
+Duas dessas valem menção separada. A do **IP perdido entre controller e service** é a que justifica os
+testes de segurança irem pelo HTTP em vez de chamarem o service direto: um teste unitário do
+`loginWithCredentials` passaria feliz com `context` vazio, e o log chegaria ao CloudWatch sem o único
+campo que permite identificar a origem do ataque. A do **"assinar mas não exigir"** (SEC-12) é a
+metade que passa despercebida num refactor justamente porque o sistema continua funcionando
+normalmente — e sem exigir, adicionar os claims não protege de nada.
+
 ### O que os testes não cobrem
 
 - **SEC-08 fim a fim.** Os testes unitários cobrem a lógica de encerramento com dependências
@@ -585,6 +816,20 @@ refactor foram introduzidas de propósito e todas derrubaram a suíte:
 - **Os limites em números absolutos.** `LOGIN_LIMIT`, `REGISTER_LIMIT` etc. são importados pelos
   testes, então mudar o valor não quebra nada — de propósito. O que os testes travam é o
   *comportamento* (bloqueia depois do limite, seja ele qual for), não a política.
+- **O agendamento da purga (SEC-09).** Os testes cobrem o recorte do `deleteMany` contra o banco real
+  e o invólucro do executável (código de saída, desconexão, log). Que o EventBridge dispare a task
+  todo dia só existe no console — enquanto a Scheduled Task não for criada, a purga é um comando que
+  ninguém chama.
+- **O alarme do CloudWatch (SEC-10).** A aplicação emite os eventos no formato que o metric filter
+  consome, e o formato está travado por teste. Que exista um filtro e um alarme lendo esses eventos
+  é configuração de console — sem isso, o log é uma caixa-preta que só serve depois do incidente,
+  não durante.
+- **O posicionamento do `/ready` depois do limitador global (SEC-17).** Nenhum teste trava a ordem
+  de declaração no `app.ts`, então mover a rota pra cima do `globalLimiter` passaria silencioso. A
+  contenção que importa é o ALB não rotear `/ready`, e essa não é testável daqui.
+- **A janela de 30 dias em si.** `REFRESH_TOKEN_RETENTION_DAYS` é importado pelos testes, então
+  mudar o número não quebra nada — igual aos limites de rate limit. O que está travado é o
+  comportamento: preserva o que está dentro da janela, apaga o que está fora.
 
 ---
 
@@ -596,7 +841,21 @@ refactor foram introduzidas de propósito e todas derrubaram a suíte:
 
 3. **Store do rate limit.** Memória (uma task) ou Postgres (várias tasks)? Recomendo começar em memória com uma task só, e migrar quando escalar.
 
-4. **Aplico as correções agora?** Este documento é a proposta. Nada foi alterado no código. Posso implementar na ordem da seção 6, ou só o bloco "antes do ECR" — você escolhe o recorte.
+4. ~~**Aplico as correções agora?**~~ Respondido em dois recortes: o bloco "antes do ECR" em
+   17/08/2026 e o bloco que dependia só de código em 18/08/2026. O que resta na seção 6 depende de
+   console AWS (INFRA-01..08, SEC-03, e as pontas de console do SEC-09 e do SEC-10) ou de esteira
+   (SEC-13, SEC-20), fora o SEC-19, que é task definition. O SEC-17 entrou junto do bloco 2 e o
+   SEC-15 foi fechado por decisão (item 5 abaixo).
+
+5. ~~**Cost do bcrypt (SEC-15).**~~ **Decidido em 18/08/2026: fica em 10.** Com `skipSuccessfulRequests`
+   no limitador de login, cost 12 faria 3 IPs com uma conta válida ocuparem ~90% de uma instância de
+   2 vCPU, contra ~8 IPs no cost 10 — e o ganho seria condicional a um vazamento do banco e não
+   alcançaria nenhum usuário existente (o cost fica gravado no hash). Medição completa na seção 4.6.
+
+6. **Limiar dos alarmes do CloudWatch.** Sugiro `refresh_token_reuse >= 1` em qualquer janela (toda
+   ocorrência é roubo confirmado) e `login_failed` em algo como 30 por 5 minutos — mas o segundo
+   número depende do seu volume real de usuários, que hoje nenhum de nós sabe. Vale começar frouxo e
+   apertar depois de uma semana observando.
 
 5. **Trocar as chaves antes do deploy.** O `JWT_SECRET` do seu `.env` local foi usado em desenvolvimento e pode ter passado por logs, backups ou terminal. Gere segredos novos pra produção e guarde **só** no SSM Parameter Store:
 

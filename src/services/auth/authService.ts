@@ -6,6 +6,7 @@ import prisma from '../../config/prisma.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
 import { normalizeUsername, usernameEmUso, gerarUsernameDisponivel } from '../../lib/username.js';
+import { logSecurityEvent, type SecurityContext } from '../../utils/logger.js';
 import type { User } from '../../generated/client.js';
 
 const SALT_ROUNDS = 10;
@@ -70,17 +71,29 @@ export async function getUserById(id: number): Promise<AuthUser | null> {
   return user ? toAuthUser(user) : null;
 }
 
-export async function loginWithCredentials(username: string, password: string): Promise<AuthUser> {
+// SEC-10 -> O log da falha mora aqui, e não no controller, porque só aqui se sabe
+// QUAL dos dois ramos falhou. A resposta ao cliente continua indistinguível (é o que
+// impede enumeração), mas o log registra a diferença — "500 user_not_found do mesmo IP"
+// é varredura de usernames, "500 invalid_password no mesmo username" é força bruta de
+// senha. São ataques diferentes e a distinção só existe neste ponto do código.
+export async function loginWithCredentials(
+  username: string,
+  password: string,
+  context: SecurityContext = {},
+): Promise<AuthUser> {
   const user = await prisma.user.findUnique({ where: { username: normalizeUsername(username) } });
 
   // Mesma mensagem tanto pra "não existe" quanto pra "senha errada" — não dar
   // pista de qual delas falhou, pra não facilitar enumeração de usernames cadastrados.
   if (!user || !user.password) {
+    logSecurityEvent('login_failed', { ip: context.ip, username, reason: 'user_not_found' });
     throw new AppError(401, 'Credenciais inválidas.');
   }
 
   const passwordMatches = await bcrypt.compare(password, user.password);
   if (!passwordMatches) {
+    // Nunca a senha tentada — só o identificador de quem foi alvo.
+    logSecurityEvent('login_failed', { ip: context.ip, username, userId: user.id, reason: 'invalid_password' });
     throw new AppError(401, 'Credenciais inválidas.');
   }
 
@@ -155,18 +168,33 @@ interface TokenPayload {
   email: string;
 }
 
+// SEC-12 -> Quem emitiu e pra quem o token serve. Hoje só esta aplicação usa o
+// JWT_SECRET, então o ganho é pequeno; a hora de colocar é agora, antes de existir um
+// segundo serviço compartilhando o segredo, quando um token emitido pra outro público
+// passaria a ser aceito aqui sem nenhum aviso.
+//
+// Exigir na verificação é o que dá sentido ao par: assinar sem exigir não protege nada.
+const JWT_ISSUER = 'sistema-controle-despesas-api';
+const JWT_AUDIENCE = 'sistema-controle-despesas-web';
+
 export function signToken(user: AuthUser): string {
   const payload: TokenPayload = { sub: user.id, email: user.email };
 
   return jwt.sign(payload, env.JWT_SECRET, {
     algorithm: 'HS256',
     expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
   });
 }
 
 export function verifyToken(token: string): TokenPayload {
   try {
-    return jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as unknown as TokenPayload;
+    return jwt.verify(token, env.JWT_SECRET, {
+      algorithms: ['HS256'],
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }) as unknown as TokenPayload;
   } catch {
     throw new AppError(401, 'Token inválido ou expirado.');
   }
@@ -223,6 +251,36 @@ export async function revokeRefreshToken(rawToken: string): Promise<void> {
   });
 }
 
+// SEC-06 -> Derruba TODAS as sessões do usuário, de todos os dispositivos e de todas as
+// famílias de rotação. Diferente de revokeTokenFamily, que só alcança a linhagem de um
+// token específico: aqui o alvo é o usuário inteiro, porque o gatilho (troca de senha)
+// significa "não confio em nenhuma sessão que exista agora".
+export async function revokeAllUserTokens(userId: number): Promise<void> {
+  await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+}
+
+// SEC-09 -> Cada /auth/refresh insere uma linha e revoga a anterior; nada some sozinho.
+// Um usuário ativo gera ~96 linhas por dia com access token de 15 minutos.
+//
+// A janela de retenção não é arbitrária: uma linha revogada ainda serve pra detectar
+// reuso (é ela que faz rotateRefreshToken reconhecer um token roubado em vez de
+// devolver "não existe"). Passados 30 dias, o refresh token já expirou de qualquer
+// forma — o registro vira peso morto.
+export const REFRESH_TOKEN_RETENTION_DAYS = 30;
+
+export async function purgeExpiredRefreshTokens(): Promise<number> {
+  const cutoff = new Date(Date.now() - REFRESH_TOKEN_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  const { count } = await prisma.refreshToken.deleteMany({
+    where: { OR: [{ expiresAt: { lt: cutoff } }, { revokedAt: { lt: cutoff } }] },
+  });
+
+  return count;
+}
+
 export interface RotatedSession {
   user: AuthUser;
   refreshToken: IssuedRefreshToken;
@@ -232,7 +290,7 @@ export interface RotatedSession {
 // pra emitir um access token novo. Detecta reuso: um token já revogado sendo
 // apresentado de novo é sinal de token roubado — revoga a família inteira, forçando
 // login de novo em todos os dispositivos daquela sessão.
-export async function rotateRefreshToken(rawToken: string): Promise<RotatedSession> {
+export async function rotateRefreshToken(rawToken: string, context: SecurityContext = {}): Promise<RotatedSession> {
   const tokenHash = hashRefreshToken(rawToken);
   const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
@@ -241,6 +299,19 @@ export async function rotateRefreshToken(rawToken: string): Promise<RotatedSessi
   }
 
   if (existing.revokedAt) {
+    // SEC-10 -> Este é o evento mais importante da aplicação inteira: um token já
+    // rotacionado sendo reapresentado só acontece se alguém ficou com uma cópia. Não é
+    // suspeita, é roubo confirmado — e até aqui acontecia em silêncio absoluto.
+    //
+    // O identificador logado é o prefixo do hash, nunca o token: quem lê o log precisa
+    // conseguir correlacionar a linha do banco, não reusar a credencial.
+    logSecurityEvent('refresh_token_reuse', {
+      ip: context.ip,
+      userId: existing.userId,
+      familyId: existing.familyId,
+      tokenHashPrefix: tokenHash.slice(0, 12),
+    });
+
     await revokeTokenFamily(existing.familyId);
     throw new AppError(401, 'Sessão inválida. Faça login novamente.');
   }

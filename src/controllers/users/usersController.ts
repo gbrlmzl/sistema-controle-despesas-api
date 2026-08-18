@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { AuthUser } from '../../services/auth/authService.js';
+import { establishSession } from '../../lib/session.js';
+import { revokeAllUserTokens, type AuthUser } from '../../services/auth/authService.js';
 import {
   changeUserPassword,
   updateProfile as updateProfileService,
@@ -36,6 +37,16 @@ export async function changePassword(req: Request, res: Response, next: NextFunc
     const user = currentUser(req);
     const { currentPassword, newPassword } = req.body as { currentPassword: string; newPassword: string };
     const updated = await changeUserPassword(user.id, currentPassword, newPassword);
+
+    // SEC-06 -> Trocar a senha é o gesto universal de "expulsar o invasor". Sem isto,
+    // um refresh token roubado continuava rotacionando por até 7 dias e a ação que o
+    // usuário acredita ter resolvido o problema não resolvia nada.
+    //
+    // A ordem importa: revogar tudo primeiro, emitir depois. Invertido, o par novo
+    // nasceria e seria revogado na mesma requisição — o próprio usuário cairia.
+    await revokeAllUserTokens(user.id);
+    await establishSession(res, updated);
+
     res.status(200).json({ user: updated });
   } catch (err) {
     next(err);

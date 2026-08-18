@@ -7,12 +7,12 @@ import { buildLimiter } from '../../src/middlewares/rateLimit.js';
 // que dispara dezenas de requisições nas mesmas rotas de propósito, testaria o
 // limitador em vez do endpoint). Aqui eles são montados à mão com `skip: () => false`
 // pra exercitar o comportamento de verdade.
-function appWithLimiter(options: Parameters<typeof buildLimiter>[0]): Express {
+function appWithLimiter(options: Parameters<typeof buildLimiter>[1]): Express {
   const testApp = express();
   // Mesmo valor de produção — é o que faz o limitador enxergar o IP real do cliente
   // em vez do IP do proxy (SEC-02).
   testApp.set('trust proxy', 1);
-  testApp.use(buildLimiter({ skip: () => false, ...options }));
+  testApp.use(buildLimiter('teste', { skip: () => false, ...options }));
   testApp.post('/recurso', (req: Request, res: Response) => {
     // Permite simular resposta de erro, pra exercitar skipSuccessfulRequests.
     const status = Number(req.query.status ?? 200);
