@@ -1,7 +1,7 @@
 {
   "name": "sistema-controle-despesas-api",
   "version": "1.0.0",
-  "description": "Primeiro commit.",
+  "description": "API REST em Node.js, Express e TypeScript para controle compartilhado de despesas domésticas: residências com múltiplos membros, despesas por competência mensal, fechamento de mês e relatórios de gastos.",
   "main": "src/server.ts",
   "engines": {
     "node": ">=24"
@@ -15,15 +15,16 @@
     "start": "node dist/server.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "purge:tokens": "node dist/scripts/purgeTokens.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gbrlmzl/sistema-controle-despesas-api.git"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Gabriel Mizael",
+  "license": "MIT",
   "type": "module",
   "bugs": {
     "url": "https://github.com/gbrlmzl/sistema-controle-despesas-api/issues"
