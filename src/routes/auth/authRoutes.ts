@@ -1,10 +1,25 @@
 import { Router } from 'express';
 import { env, googleAuthEnabled } from '../../config/env.js';
 import passport from '../../config/passport.js';
-import { loginLimiter, refreshLimiter, registerLimiter } from '../../middlewares/rateLimit.js';
+import {
+  forgotPasswordLimiter,
+  loginLimiter,
+  refreshLimiter,
+  registerLimiter,
+  resetPasswordLimiter,
+} from '../../middlewares/rateLimit.js';
 import { validateBody } from '../../middlewares/validate.js';
-import { loginSchema, registerSchema } from '../../schemas/usuarios.js';
-import { googleCallback, login, logout, refresh, register } from '../../controllers/auth/authController.js';
+import { forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, verifyResetTokenSchema } from '../../schemas/usuarios.js';
+import {
+  forgotPassword,
+  googleCallback,
+  login,
+  logout,
+  refresh,
+  register,
+  resetPassword,
+  verifyResetPasswordToken,
+} from '../../controllers/auth/authController.js';
 
 const router = Router();
 
@@ -16,6 +31,17 @@ router.post('/refresh', refreshLimiter, refresh);
 // logout é barato (um UPDATE) e coberto pelo limitador global — sem limite próprio,
 // pra não impedir alguém de encerrar a própria sessão.
 router.post('/logout', logout);
+
+// Recuperação de senha (docs/plano-recuperacao-de-senha.md). D-10 -> o token sempre
+// no corpo, nunca em parâmetro de rota.
+router.post('/forgot-password', forgotPasswordLimiter, validateBody(forgotPasswordSchema), forgotPassword);
+router.post(
+  '/reset-password/verify',
+  resetPasswordLimiter,
+  validateBody(verifyResetTokenSchema),
+  verifyResetPasswordToken,
+);
+router.post('/reset-password', resetPasswordLimiter, validateBody(resetPasswordSchema), resetPassword);
 
 // Só existe se as credenciais do Google estiverem configuradas (ver src/config/env.ts).
 if (googleAuthEnabled) {

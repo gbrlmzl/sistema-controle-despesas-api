@@ -33,6 +33,23 @@ const envSchema = z
     // Assina o cookie de "state" usado só durante o handshake do OAuth do Google
     // (proteção CSRF do passport-oauth2) — não guarda sessão de usuário nenhuma.
     COOKIE_SESSION_SECRET: optionalString(z.string().min(32)),
+
+    // Recuperação de senha por email (ver docs/plano-recuperacao-de-senha.md).
+    PASSWORD_RESET_TOKEN_EXPIRES_IN: z.string().default('30m'),
+    // Caminho da tela de redefinição no front-end (o link = FRONTEND_URL + este caminho + ?token=)
+    PASSWORD_RESET_PATH: z.string().startsWith('/').default('/change-password'),
+
+    // SMTP também é um grupo opcional "tudo ou nada", no mesmo mecanismo do Google
+    // acima. Sem as 5 variáveis, a API sobe normalmente e o "envio" só loga (ver
+    // mailEnabled/src/lib/mailer.ts) — é o que mantém o CI verde sem segredo nenhum.
+    SMTP_HOST: optionalString(z.string()),
+    SMTP_USER: optionalString(z.email()),
+    MAIL_FROM: optionalString(z.string()),
+    SMTP_PASSWORD: optionalString(z.string()),
+    // z.coerce.number() transforma '' em 0 — o mesmo preprocess do optionalString
+    // acima intercepta a string vazia antes da coação, mas aqui não dá pra reusar o
+    // helper (ele exige saída string; a saída aqui é number).
+    SMTP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional()),
   })
   .refine(
     (data) =>
@@ -46,6 +63,19 @@ const envSchema = z
       message:
         'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL e COOKIE_SESSION_SECRET devem ser todos fornecidos juntos, ou nenhum deles.',
       path: ['GOOGLE_CLIENT_ID'],
+    },
+  )
+  .refine(
+    (data) =>
+      [data.SMTP_HOST, data.SMTP_USER, data.MAIL_FROM, data.SMTP_PASSWORD, data.SMTP_PORT].every(
+        (v) => v !== undefined,
+      ) ||
+      [data.SMTP_HOST, data.SMTP_USER, data.MAIL_FROM, data.SMTP_PASSWORD, data.SMTP_PORT].every(
+        (v) => v === undefined,
+      ),
+    {
+      message: 'SMTP_HOST, SMTP_USER, SMTP_PORT, SMTP_PASSWORD e MAIL_FROM devem ser todos fornecidos juntos, ou nenhum deles.',
+      path: ['SMTP_HOST'],
     },
   );
 
@@ -63,3 +93,12 @@ export const googleAuthEnabled =
   env.GOOGLE_CLIENT_SECRET !== undefined &&
   env.GOOGLE_CALLBACK_URL !== undefined &&
   env.COOKIE_SESSION_SECRET !== undefined;
+
+// D-08 -> Sem as 5 variáveis, a API sobe normalmente e o envio de email só é
+// registrado em log (ver src/lib/mailer.ts) — nunca sai de verdade.
+export const mailEnabled =
+  env.SMTP_HOST !== undefined &&
+  env.SMTP_USER !== undefined &&
+  env.MAIL_FROM !== undefined &&
+  env.SMTP_PASSWORD !== undefined &&
+  env.SMTP_PORT !== undefined;

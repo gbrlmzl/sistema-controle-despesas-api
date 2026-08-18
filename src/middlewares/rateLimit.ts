@@ -105,3 +105,28 @@ export const refreshLimiter = buildLimiter('refresh', {
   limit: REFRESH_LIMIT,
   message: { message: 'Muitas renovações de sessão. Aguarde alguns minutos.' },
 });
+
+// Recuperação de senha: cada requisição válida dispara um email real, então o custo
+// aqui não é só CPU — é cota do Gmail e incômodo pra um terceiro que nem pediu nada.
+//
+// ⚠️ D-07 -> NUNCA `skipSuccessfulRequests` aqui. O endpoint responde 200 por design
+// (D-03, anti-enumeração): toda requisição é "bem-sucedida" do ponto de vista do
+// rate-limiter, então essa opção desarmaria o limitador por completo, em silêncio —
+// não "padronize" com o loginLimiter.
+export const FORGOT_PASSWORD_LIMIT = 5;
+
+export const forgotPasswordLimiter = buildLimiter('forgot-password', {
+  windowMs: 60 * 60 * 1000,
+  limit: FORGOT_PASSWORD_LIMIT,
+  message: { message: 'Muitos pedidos de redefinição de senha. Tente novamente mais tarde.' },
+});
+
+// Fecha a porta pra tentativa de adivinhar token (32 bytes, mas defesa em
+// profundidade) e limita o gasto de bcrypt.hash por IP.
+export const RESET_PASSWORD_LIMIT = 10;
+
+export const resetPasswordLimiter = buildLimiter('reset-password', {
+  windowMs: 60 * 60 * 1000,
+  limit: RESET_PASSWORD_LIMIT,
+  message: { message: 'Muitas tentativas de redefinição de senha. Tente novamente mais tarde.' },
+});

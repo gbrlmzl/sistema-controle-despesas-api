@@ -2,6 +2,7 @@ import request from 'supertest';
 import app from '../../src/app.js';
 import prisma from '../../src/config/prisma.js';
 import {
+  FORGOT_PASSWORD_LIMIT,
   GLOBAL_LIMIT,
   LOGIN_LIMIT,
   REGISTER_LIMIT,
@@ -165,6 +166,29 @@ describe('POST /auth/refresh tem limite próprio, mais folgado que o do login', 
       // 401 = sem cookie de refresh, que é o esperado. O que importa é não ser 429.
       expect(attempt.status).toBe(401);
     }
+  });
+});
+
+describe('POST /auth/forgot-password está protegido de email bombing (D-07)', () => {
+  it(`bloqueia a partir do pedido ${FORGOT_PASSWORD_LIMIT + 1}`, async () => {
+    const ip = '203.0.113.70';
+
+    for (let i = 1; i <= FORGOT_PASSWORD_LIMIT; i++) {
+      const attempt = await request(app)
+        .post('/auth/forgot-password')
+        .set('X-Forwarded-For', ip)
+        .send({ email: `naoexiste-${i}@${TEST_EMAIL_DOMAIN}` });
+
+      // Sempre 200 (D-03) — o limitador conta a requisição, não o "sucesso".
+      expect(attempt.status).toBe(200);
+    }
+
+    const blocked = await request(app)
+      .post('/auth/forgot-password')
+      .set('X-Forwarded-For', ip)
+      .send({ email: `naoexiste-x@${TEST_EMAIL_DOMAIN}` });
+
+    expect(blocked.status).toBe(429);
   });
 });
 

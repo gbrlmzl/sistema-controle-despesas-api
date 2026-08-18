@@ -10,16 +10,21 @@ export const usernameSchema = z
 
 export const nameSchema = z.string().min(1, 'O nome não pode estar vazio').max(100);
 
+// Regra de senha compartilhada entre registro, troca de senha e redefinição por
+// email — três lugares diferentes que precisam concordar exatamente na mesma regra,
+// senão um schema aceita o que o outro rejeita.
+export const passwordSchema = z
+  .string()
+  .min(8, 'A senha deve ter no mínimo 8 caracteres')
+  .max(100)
+  .refine((p) => /[\d\W]/.test(p), 'A senha deve conter ao menos um número ou símbolo');
+
 export const registerSchema = z
   .object({
     name: nameSchema,
     username: usernameSchema,
     email: z.email('Email inválido'),
-    password: z
-      .string()
-      .min(8, 'A senha deve ter no mínimo 8 caracteres')
-      .max(100)
-      .refine((p) => /[\d\W]/.test(p)),
+    password: passwordSchema,
     confirmPassword: z.string().min(1, 'Confirme a senha'),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -70,11 +75,31 @@ export const updateProfileSchema = z
 export const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, 'Informe a senha atual'),
-    newPassword: z
-      .string()
-      .min(8, 'A nova senha deve ter no mínimo 8 caracteres')
-      .max(100)
-      .refine((p) => /[\d\W]/.test(p), 'A nova senha deve conter ao menos um número ou símbolo'),
+    newPassword: passwordSchema,
+    confirmNewPassword: z.string().min(1, 'Confirme a nova senha'),
+  })
+  .refine((data) => data.newPassword === data.confirmNewPassword, {
+    path: ['confirmNewPassword'],
+    message: 'As novas senhas não coincidem',
+  });
+
+// D-01 -> Recuperação de senha aceita email, não username (ver plano de recuperação
+// de senha, D-01): o username é público por design, e aceitá-lo aqui permitiria
+// disparar email pra caixa de qualquer pessoa só por conhecer o handle dela.
+export const forgotPasswordSchema = z.object({
+  email: z.email('Email inválido'),
+});
+
+// D-10 -> O token vai no corpo, nunca em parâmetro de rota — morgan loga a URL
+// completa em produção, e um token na URL viraria credencial gravada em texto puro.
+export const verifyResetTokenSchema = z.object({
+  token: z.string().min(1, 'Token é obrigatório'),
+});
+
+export const resetPasswordSchema = z
+  .object({
+    token: z.string().min(1, 'Token é obrigatório'),
+    newPassword: passwordSchema,
     confirmNewPassword: z.string().min(1, 'Confirme a nova senha'),
   })
   .refine((data) => data.newPassword === data.confirmNewPassword, {
