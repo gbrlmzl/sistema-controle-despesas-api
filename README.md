@@ -188,6 +188,22 @@ fornecidas **juntas ou nenhuma** — o schema de env rejeita o meio-termo. Sem e
 existe apenas para sobreviver ao handshake OAuth (proteção CSRF via `state`); sessão de
 usuário é sempre JWT em cookie `httpOnly`.
 
+**Recuperação de senha ("esqueci minha senha")** — `POST /auth/forgot-password` responde
+**sempre** `200` com a mesma mensagem, exista ou não conta com aquele email: diferenciar a
+resposta abriria enumeração de contas cadastradas. O email em si é despachado **sem
+aguardar o envio**, para que o tempo de resposta também não vire um oráculo (conta que
+existe levaria o round trip do SMTP; conta que não existe, quase zero). O token de reset
+segue o mesmo padrão do refresh token — opaco, guardado só como hash SHA-256 — e é de **uso
+único e válido por 30 minutos** (`PASSWORD_RESET_TOKEN_EXPIRES_IN`); pedir um link novo
+invalida qualquer um anterior ainda não usado. Redefinir a senha **derruba todas as
+sessões** do usuário (mesmo mecanismo da troca de senha autenticada) mas **não** reabre
+sessão nenhuma — o usuário é mandado para a tela de login, porque um link de email é copiado
+e encaminhado com muito mais facilidade do que uma sessão ativa deveria permitir. O envio de
+email é opcional: sem o grupo de 5 variáveis `SMTP_*`, a API sobe normalmente e o "envio"
+apenas fica registrado em log (com o link, em `development`) — é o que mantém o CI verde sem
+segredo nenhum. Detalhes completos em
+[`docs/plano-recuperacao-de-senha.md`](docs/plano-recuperacao-de-senha.md).
+
 ```mermaid
 sequenceDiagram
     participant F as Front-end
@@ -262,6 +278,9 @@ Respostas de erro seguem sempre o formato `{ "message": "..." }`.
 | `POST` | `/login` | `{ username, password }` → `200 { user }` + cookies |
 | `POST` | `/refresh` | Rotaciona o refresh token do cookie e reemite o par |
 | `POST` | `/logout` | Revoga o refresh token e limpa os cookies |
+| `POST` | `/forgot-password` | `{ email }` → sempre `200`, mensagem fixa (anti-enumeração) |
+| `POST` | `/reset-password/verify` | `{ token }` → `200 { valid: true }` ou `400` (link expirado/usado) |
+| `POST` | `/reset-password` | `{ token, newPassword, confirmNewPassword }` → `200`, sem cookie |
 | `GET` | `/google` | Inicia o OAuth *(só se o Google estiver configurado)* |
 | `GET` | `/google/callback` | Abre a sessão e redireciona para `FRONTEND_URL` |
 
@@ -340,7 +359,8 @@ documento.
 | Vazamento de erro | Em produção o cliente recebe `"Erro interno do servidor."`; nome de tabela, constraint e host do banco ficam só no log |
 | Paginação | Teto de 100 itens por página — sem isso, `?limit=1000000` trava uma conexão do banco |
 | Sessão | Cookies `httpOnly`, `secure` em produção, `sameSite: lax`; refresh rotativo com detecção de reuso |
-| Limpeza | `npm run purge:tokens` remove refresh tokens expirados/revogados (retenção de 30 dias) — job avulso, não `setInterval` dentro da API |
+| Limpeza | `npm run purge:tokens` remove refresh tokens expirados/revogados (30 dias) e tokens/tentativas de redefinição de senha (7 dias) — job avulso, não `setInterval` dentro da API |
+| Recuperação de senha | Rate limit dedicado (`/forgot-password` 5/h, `/reset-password*` 10/h por IP) + teto de 3 emails/hora por conta, cobrindo também a conta só-Google que não emite token |
 
 ---
 
@@ -350,8 +370,9 @@ documento.
   CloudWatch) e `dev` localmente; silenciado nos testes.
 - **Eventos de segurança** — `logSecurityEvent` emite **JSON de uma linha** no stderr, com
   chaves estáveis, justamente para virar *metric filter* + alarme no CloudWatch. Eventos:
-  `refresh_token_reuse`, `login_failed`, `rate_limit_exceeded`. Nada de segredo é registrado —
-  só identificadores e o IP de origem.
+  `refresh_token_reuse`, `login_failed`, `rate_limit_exceeded`, `password_reset_token_reuse`,
+  `password_reset_throttled`. Nada de segredo é registrado — só identificadores e o IP de
+  origem.
 - **Liveness vs. readiness** — `/health` responde "o processo está vivo?" (reiniciar resolve) e
   não toca o banco; `/ready` responde "dá para atender agora?" e retorna `503` quando o
   Postgres não responde (tirar do balanceamento, não reiniciar).
@@ -431,6 +452,13 @@ configuração inválida.
 | `GOOGLE_CLIENT_SECRET` | condicional | — | juntas — ou nenhuma delas, e aí o |
 | `GOOGLE_CALLBACK_URL` | condicional | — | login com Google fica desabilitado |
 | `COOKIE_SESSION_SECRET` | condicional | — | Assina o cookie de `state` do OAuth (mín. 32 caracteres) |
+| `PASSWORD_RESET_TOKEN_EXPIRES_IN` | não | `30m` | Validade do link de redefinição de senha |
+| `PASSWORD_RESET_PATH` | não | `/change-password` | Caminho da tela de redefinição no front (compõe o link com `FRONTEND_URL`) |
+| `SMTP_HOST` | condicional | — | As cinco variáveis SMTP são exigidas |
+| `SMTP_PORT` | condicional | — | juntas — ou nenhuma delas, e aí o envio |
+| `SMTP_USER` | condicional | — | de email só é registrado em log (sem |
+| `SMTP_PASSWORD` | condicional | — | recuperação de senha por email de verdade) |
+| `MAIL_FROM` | condicional | — | Remetente — precisa ser o mesmo endereço de `SMTP_USER` no Gmail |
 
 ---
 
@@ -444,11 +472,11 @@ npm test
 npm run test:coverage
 ```
 
-24 arquivos de teste, divididos entre `tests/unit/` (schemas Zod, regras dos services,
+27 arquivos de teste, divididos entre `tests/unit/` (schemas Zod, regras dos services,
 utilitários operacionais) e `tests/integration/` (Supertest contra o app real, com banco).
 A integração cobre os fluxos de auth, residências, despesas, notificações e usuários, além de
-casos especificamente de segurança: rate limiting, troca de senha, purga de refresh tokens e
-emissão dos eventos de segurança.
+casos especificamente de segurança: rate limiting, troca de senha, recuperação de senha por
+email, purga de tokens e emissão dos eventos de segurança.
 
 Detalhe deliberado: **os limitadores ficam desarmados em `NODE_ENV=test`**, porque a suíte
 dispara dezenas de requisições nas mesmas rotas de propósito — do contrário ela testaria o
@@ -492,7 +520,8 @@ flowchart LR
 | `npm test` | Suíte completa |
 | `npm run test:coverage` | Suíte com relatório de cobertura |
 | `npm run prisma:generate` | Regera o Prisma Client |
-| `npm run purge:tokens` | Limpa refresh tokens expirados e sai (agendado como task avulsa) |
+| `npm run purge:tokens` | Limpa refresh tokens e tokens de redefinição de senha expirados, e sai (agendado como task avulsa) |
+| `npm run mail:test -- destino@exemplo.com` | Envia um email de teste pelo SMTP configurado, para validar as credenciais |
 
 ---
 
@@ -507,6 +536,8 @@ escritas, discutidas e aprovadas antes do código.
 - [`docs/revisao-seguranca-deploy-aws.md`](docs/revisao-seguranca-deploy-aws.md) — revisão de
   segurança pré-deploy: cada item `SEC-*` referenciado nos comentários do código, mais os itens
   `INFRA-*` da camada AWS.
+- [`docs/plano-recuperacao-de-senha.md`](docs/plano-recuperacao-de-senha.md) — decisões
+  (`D-*`) e roteiro de implementação da recuperação de senha por email.
 - [`docs/exemplos-insomnia/`](docs/exemplos-insomnia) — exemplos de requisição.
 
 Os comentários no código explicam **por que** algo é daquele jeito, não o que a linha faz —
