@@ -82,7 +82,15 @@ jobs:
           IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}
           EOF
 
-      - name: Build da imagem
+      - name: Configurar QEMU (emulação ARM64 no runner x86_64)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build da imagem (linux/arm64 — destino são instâncias Graviton/t4g)
+        env:
+          DOCKER_DEFAULT_PLATFORM: linux/arm64
         run: docker compose --profile prod build
 
       - name: Salvar imagens (api + migrate) para os próximos jobs
@@ -131,6 +139,9 @@ jobs:
           API_IMAGE=${{ needs.build.outputs.image }}
           IMAGE_TAG=${{ needs.build.outputs.sha_tag }}
           EOF
+
+      - name: Configurar QEMU (necessário para executar a imagem ARM64 neste runner x86_64)
+        uses: docker/setup-qemu-action@v3
 
       - name: Subir a stack e aguardar /health
         run: |
