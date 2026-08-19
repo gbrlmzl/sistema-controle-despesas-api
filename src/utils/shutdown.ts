@@ -12,9 +12,17 @@ export interface ShutdownDependencies {
   // Deliberadamente menor que o stopTimeout padrão do ECS (30s), pra que o processo
   // encerre por vontade própria em vez de levar SIGKILL no meio do caminho.
   timeoutMs?: number;
+  // D-04 -> espera os emails de recuperação de senha já disparados (sem await, ver
+  // passwordResetService.flushPendingEmails) terminarem antes de fechar o servidor.
+  // Opcional: sem esta dependência, o encerramento segue exatamente como antes.
+  flushPendingWork?: () => Promise<void>;
+  // Guarda PRÓPRIA, menor que timeoutMs: um SMTP travado não pode consumir o
+  // orçamento inteiro reservado pra fechar o servidor e desconectar do Prisma.
+  flushTimeoutMs?: number;
 }
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
+export const DEFAULT_FLUSH_TIMEOUT_MS = 5_000;
 
 export function createShutdownHandler(deps: ShutdownDependencies): (signal: string) => void {
   let shuttingDown = false;
@@ -39,18 +47,37 @@ export function createShutdownHandler(deps: ShutdownDependencies): (signal: stri
     // Este timer sozinho não deve segurar o event loop se tudo já fechou.
     forceExit.unref?.();
 
-    deps.closeServer((err) => {
-      if (err) {
-        deps.logError(err, 'shutdown/server.close');
-      }
+    function closeAndExit(): void {
+      deps.closeServer((err) => {
+        if (err) {
+          deps.logError(err, 'shutdown/server.close');
+        }
 
-      deps
-        .disconnect()
-        .catch((disconnectError: unknown) => deps.logError(disconnectError, 'shutdown/prisma.$disconnect'))
-        .finally(() => {
-          clearTimeout(forceExit);
-          deps.exit(err ? 1 : 0);
-        });
-    });
+        deps
+          .disconnect()
+          .catch((disconnectError: unknown) => deps.logError(disconnectError, 'shutdown/prisma.$disconnect'))
+          .finally(() => {
+            clearTimeout(forceExit);
+            deps.exit(err ? 1 : 0);
+          });
+      });
+    }
+
+    // Sem flushPendingWork, o comportamento é idêntico ao de antes (síncrono). Com
+    // ele, corre contra a própria guarda: se o SMTP travar, closeAndExit segue em
+    // frente mesmo assim — perder um email em voo é melhor que atrasar o encerramento
+    // inteiro por causa dele.
+    if (deps.flushPendingWork) {
+      const timeoutPromise = new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, deps.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS);
+        t.unref?.();
+      });
+
+      Promise.race([deps.flushPendingWork(), timeoutPromise])
+        .catch((flushError: unknown) => deps.logError(flushError, 'shutdown/flushPendingWork'))
+        .finally(closeAndExit);
+    } else {
+      closeAndExit();
+    }
   };
 }

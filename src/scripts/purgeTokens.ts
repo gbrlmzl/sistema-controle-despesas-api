@@ -8,11 +8,13 @@
 
 import prisma from '../config/prisma.js';
 import { purgeExpiredRefreshTokens } from '../services/auth/authService.js';
+import { purgeExpiredPasswordResetTokens } from '../services/auth/passwordResetService.js';
 import { logError } from '../utils/logger.js';
 import { runTokenPurge } from '../utils/tokenPurge.js';
 
 const exitCode = await runTokenPurge({
-  purge: purgeExpiredRefreshTokens,
+  purgeRefreshTokens: purgeExpiredRefreshTokens,
+  purgePasswordResetTokens: purgeExpiredPasswordResetTokens,
   disconnect: () => prisma.$disconnect(),
   log: (message) => console.log(message),
   logError,

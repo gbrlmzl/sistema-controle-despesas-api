@@ -150,4 +150,58 @@ describe('createShutdownHandler (SEC-08)', () => {
       jest.useRealTimers();
     }
   });
+
+  // D-04 -> flushPendingWork espera os emails de recuperação de senha já disparados
+  // (sem await) terminarem antes do servidor fechar.
+  describe('flushPendingWork (D-04)', () => {
+    it('aguarda flushPendingWork terminar antes de fechar o servidor', async () => {
+      let resolveFlush: (() => void) | undefined;
+      const flushPendingWork = jest.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFlush = resolve;
+          }),
+      );
+
+      const { deps, finishClose } = makeDeps({ flushPendingWork });
+      const shutdown = createShutdownHandler(deps);
+
+      shutdown('SIGTERM');
+      await flush();
+
+      // Ainda esperando o flush: o servidor não pode ter começado a fechar.
+      expect(deps.closeServer).not.toHaveBeenCalled();
+
+      resolveFlush?.();
+      await flush();
+
+      expect(deps.closeServer).toHaveBeenCalledTimes(1);
+      finishClose();
+      await flush();
+      expect(deps.exit).toHaveBeenCalledWith(0);
+    });
+
+    it('não deixa um flushPendingWork travado impedir o encerramento (guarda própria)', async () => {
+      jest.useFakeTimers();
+
+      try {
+        // Nunca resolve — simula um SMTP travado.
+        const flushPendingWork = jest.fn(() => new Promise<void>(() => undefined));
+        const { deps, finishClose } = makeDeps({ flushPendingWork });
+        const shutdown = createShutdownHandler({ ...deps, flushTimeoutMs: 5_000, timeoutMs: 15_000 });
+
+        shutdown('SIGTERM');
+        expect(deps.closeServer).not.toHaveBeenCalled();
+
+        // A guarda do flush (5s) vence bem antes da guarda geral (15s).
+        jest.advanceTimersByTime(5_000);
+        await Promise.resolve().then(() => Promise.resolve());
+
+        expect(deps.closeServer).toHaveBeenCalledTimes(1);
+        finishClose();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
 });

@@ -4,6 +4,7 @@ import prisma from './config/prisma.js';
 import { env } from './config/env.js';
 import { logError } from './utils/logger.js';
 import { createShutdownHandler } from './utils/shutdown.js';
+import { flushPendingEmails } from './services/auth/passwordResetService.js';
 
 process.on('uncaughtException', (err) => {
   logError(err, 'uncaughtException');
@@ -31,6 +32,10 @@ const shutdown = createShutdownHandler({
   exit: (code) => process.exit(code),
   logError,
   log: (message) => console.log(message),
+  // D-04 -> espera os emails de recuperação de senha já disparados terminarem, com
+  // guarda própria (ver shutdown.ts) — um SMTP travado não pode impedir o processo de
+  // morrer.
+  flushPendingWork: flushPendingEmails,
 });
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));

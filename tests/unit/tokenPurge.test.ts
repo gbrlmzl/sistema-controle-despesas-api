@@ -11,7 +11,8 @@ import { runTokenPurge, type TokenPurgeDependencies } from '../../src/utils/toke
 
 function deps(overrides: Partial<TokenPurgeDependencies> = {}) {
   return {
-    purge: jest.fn(async () => 0) as TokenPurgeDependencies['purge'],
+    purgeRefreshTokens: jest.fn(async () => 0) as TokenPurgeDependencies['purgeRefreshTokens'],
+    purgePasswordResetTokens: jest.fn(async () => 0) as TokenPurgeDependencies['purgePasswordResetTokens'],
     disconnect: jest.fn(async () => undefined) as TokenPurgeDependencies['disconnect'],
     log: jest.fn() as TokenPurgeDependencies['log'],
     logError: jest.fn() as TokenPurgeDependencies['logError'],
@@ -20,14 +21,18 @@ function deps(overrides: Partial<TokenPurgeDependencies> = {}) {
 }
 
 describe('runTokenPurge (SEC-09)', () => {
-  it('sai com 0 e loga quantas linhas removeu', async () => {
-    const d = deps({ purge: jest.fn(async () => 42) as TokenPurgeDependencies['purge'] });
+  it('sai com 0 e loga quantas linhas removeu de cada tabela', async () => {
+    const d = deps({
+      purgeRefreshTokens: jest.fn(async () => 42) as TokenPurgeDependencies['purgeRefreshTokens'],
+      purgePasswordResetTokens: jest.fn(async () => 7) as TokenPurgeDependencies['purgePasswordResetTokens'],
+    });
 
     await expect(runTokenPurge(d)).resolves.toBe(0);
 
     // O número precisa aparecer no log: é a única evidência de que a task rodou e
     // fez alguma coisa — o EventBridge só registra que o container saiu.
     expect(d.log).toHaveBeenCalledWith(expect.stringContaining('42'));
+    expect(d.log).toHaveBeenCalledWith(expect.stringContaining('7'));
   });
 
   it('desconecta do banco mesmo no caminho feliz', async () => {
@@ -40,22 +45,41 @@ describe('runTokenPurge (SEC-09)', () => {
     expect(d.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('sai com 1 quando a purga falha, e ainda assim desconecta', async () => {
+  it('sai com 1 quando a purga de refresh tokens falha, mas ainda roda a de reset e desconecta', async () => {
     const falha = new Error('banco fora do ar');
-    const d = deps({ purge: jest.fn(async () => { throw falha; }) as TokenPurgeDependencies['purge'] });
+    const d = deps({
+      purgeRefreshTokens: jest.fn(async () => {
+        throw falha;
+      }) as TokenPurgeDependencies['purgeRefreshTokens'],
+    });
 
     // Código de saída diferente de zero é o que faz a execução aparecer como falha no
     // ECS. Uma limpeza que quebra em silêncio é pior que nenhuma limpeza.
     await expect(runTokenPurge(d)).resolves.toBe(1);
-    expect(d.logError).toHaveBeenCalledWith(falha, 'purgeTokens');
+    expect(d.logError).toHaveBeenCalledWith(falha, 'purgeTokens/refreshTokens');
+    expect(d.purgePasswordResetTokens).toHaveBeenCalledTimes(1);
     expect(d.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('sai com 1 quando a desconexão falha, mesmo com a purga bem-sucedida', async () => {
+  it('sai com 1 quando a purga de tokens de reset falha, mas ainda desconecta', async () => {
+    const falha = new Error('banco fora do ar');
+    const d = deps({
+      purgePasswordResetTokens: jest.fn(async () => {
+        throw falha;
+      }) as TokenPurgeDependencies['purgePasswordResetTokens'],
+    });
+
+    await expect(runTokenPurge(d)).resolves.toBe(1);
+    expect(d.logError).toHaveBeenCalledWith(falha, 'purgeTokens/passwordResetTokens');
+    expect(d.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('sai com 1 quando a desconexão falha, mesmo com as duas purgas bem-sucedidas', async () => {
     const falha = new Error('conexão já encerrada');
     const d = deps({
-      purge: jest.fn(async () => 3) as TokenPurgeDependencies['purge'],
-      disconnect: jest.fn(async () => { throw falha; }) as TokenPurgeDependencies['disconnect'],
+      disconnect: jest.fn(async () => {
+        throw falha;
+      }) as TokenPurgeDependencies['disconnect'],
     });
 
     await expect(runTokenPurge(d)).resolves.toBe(1);

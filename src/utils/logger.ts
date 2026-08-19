@@ -27,7 +27,13 @@ export type SecurityEventName =
   | 'refresh_token_reuse'
   // Sinal de força bruta quando repetido a partir do mesmo IP.
   | 'login_failed'
-  | 'rate_limit_exceeded';
+  | 'rate_limit_exceeded'
+  // Reuso de um token de redefinição de senha já consumido — mesmo peso do
+  // refresh_token_reuse: não é suspeita, é sinal de que o token vazou.
+  | 'password_reset_token_reuse'
+  // Teto por conta (D-07) estourado: o email não foi enviado, mas a resposta HTTP
+  // continua 200 (D-03), então este é o único lugar onde o evento fica visível.
+  | 'password_reset_throttled';
 
 // O IP só existe no `req`, e a camada de serviço não recebe `req` — passar o objeto
 // inteiro pra dentro dos services acoplaria regra de negócio ao Express. Este objeto

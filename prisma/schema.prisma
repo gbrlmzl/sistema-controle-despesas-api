@@ -33,6 +33,8 @@ model User {
   joinAttempts JoinAttempt[]
   expenses Expense[]
   monthClosures MonthClosure[]
+  passwordResetTokens PasswordResetToken[]
+  passwordResetAttempts PasswordResetAttempt[]
 }
 
 model UserAuthProvider {
@@ -214,4 +216,33 @@ model MonthClosure {
   @@unique([residenceId, year, month])
   residence Residence @relation(fields: [residenceId], references: [id], onDelete: Cascade)
   closedBy User @relation(fields: [closedById], references: [id])
+}
+
+//Token de redefinição de senha por email. Mesmo padrão do RefreshToken: o valor em si
+//nunca é guardado, só o hash — um dump do banco não pode redefinir a senha de ninguém.
+//usedAt significa "não vale mais": ou foi consumido, ou foi superado por um pedido novo.
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+//D-07 -> Contador do teto por conta. Existe separado do PasswordResetToken porque o
+//ramo da conta só-Google (D-11) envia email SEM emitir token: contar tokens deixaria
+//justamente essa caixa sem teto nenhum. Uma linha por email disparado, dos dois tipos.
+//Mesmo desenho do JoinAttempt (RN-052), e pelo mesmo motivo: um contador em memória não
+//sobrevive a restart nem funciona com mais de uma task no ECS.
+model PasswordResetAttempt {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

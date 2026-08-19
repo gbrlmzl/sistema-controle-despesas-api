@@ -857,6 +857,14 @@ normalmente — e sem exigir, adicionar os claims não protege de nada.
    número depende do seu volume real de usuários, que hoje nenhum de nós sabe. Vale começar frouxo e
    apertar depois de uma semana observando.
 
+   **Nota de 18/08/2026 (recuperação de senha):** o alarme ganha dois eventos novos —
+   `password_reset_token_reuse` (mesmo peso do `refresh_token_reuse`: toda ocorrência é suspeita
+   real, sugiro `>= 1` em qualquer janela também) e `password_reset_throttled` (o teto de 3/hora
+   por conta foi estourado; frequência alta sinaliza alguém tentando inundar uma caixa específica).
+   Além disso, `SMTP_PASSWORD` (credencial de app do Gmail usada pelo envio de email) entra no
+   mesmo escopo do **SEC-03**: vai para o SSM Parameter Store como `SecureString`, nunca como
+   variável em texto plano na task definition.
+
 5. **Trocar as chaves antes do deploy.** O `JWT_SECRET` do seu `.env` local foi usado em desenvolvimento e pode ter passado por logs, backups ou terminal. Gere segredos novos pra produção e guarde **só** no SSM Parameter Store:
 
    ```bash

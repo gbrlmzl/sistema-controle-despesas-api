@@ -16,7 +16,8 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "prisma:generate": "prisma generate",
-    "purge:tokens": "node dist/scripts/purgeTokens.js"
+    "purge:tokens": "node dist/scripts/purgeTokens.js",
+    "mail:test": "tsx src/scripts/testMail.ts"
   },
   "repository": {
     "type": "git",
@@ -44,6 +45,7 @@
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.11.0",
     "ms": "^2.1.3",
+    "nodemailer": "^9.0.5",
     "passport": "^0.7.0",
     "passport-google-oidc": "^0.1.0",
     "prisma": "^7.9.1",
@@ -63,6 +65,7 @@
     "@types/morgan": "^1.9.10",
     "@types/ms": "^2.1.0",
     "@types/node": "^24.13.3",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport": "^1.0.17",
     "@types/passport-google-oidc": "^0.1.0",
     "@types/supertest": "^7.2.1",
