@@ -131,7 +131,7 @@ jobs:
           POSTGRES_USER=postgres
           POSTGRES_PASSWORD=postgres
           POSTGRES_DB=sistema_despesas_ci
-          PORT=3001
+          PORT=8080
           FRONTEND_URL=http://localhost:3000
           JWT_SECRET=$(openssl rand -hex 32)
           JWT_EXPIRES_IN=15m
@@ -147,7 +147,7 @@ jobs:
         run: |
           docker compose --profile prod up -d
           for i in $(seq 1 15); do
-            if curl -fs "http://localhost:${PORT:-3001}/health"; then
+            if curl -fs "http://localhost:${PORT:-8080}/health"; then
               echo "API respondeu OK"
               exit 0
             fi

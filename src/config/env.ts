@@ -11,7 +11,7 @@ function optionalString<T extends z.ZodType<string>>(schema: T) {
 const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-    PORT: z.coerce.number().int().positive().default(3001),
+    PORT: z.coerce.number().int().positive().default(8080),
     DATABASE_URL: z.string().min(1, 'DATABASE_URL é obrigatória'),
     // Origem do front-end: usada pro CORS (Access-Control-Allow-Origin não pode ser "*"
     // quando credentials:true) e pro redirect final do callback do Google OAuth.
