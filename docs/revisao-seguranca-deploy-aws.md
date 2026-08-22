@@ -631,7 +631,7 @@ Internet
    ↓ (443 apenas)
 [ SG-alb ]      inbound: 443 e 80 de 0.0.0.0/0
    ↓
-[ SG-app ]      inbound: porta 3001 APENAS de SG-alb
+[ SG-app ]      inbound: porta 8080 APENAS de SG-alb
    ↓
 [ SG-db ]       inbound: 5432 APENAS de SG-app
 ```

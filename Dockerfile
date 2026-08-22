@@ -54,10 +54,10 @@ COPY --chown=node:node prisma.config.ts ./
 COPY --chown=node:node prisma ./prisma
 
 USER node
-EXPOSE 3001
+EXPOSE 8080
 
 # Reusa GET /health — evita instalar curl só para o healthcheck.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://localhost:'+(process.env.PORT||3001)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://localhost:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/server.js"]

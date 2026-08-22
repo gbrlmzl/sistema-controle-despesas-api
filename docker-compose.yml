@@ -44,7 +44,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-sistema_despesas}
     ports:
-      - "${PORT:-3001}:${PORT:-3001}"
+      - "${PORT:-8080}:${PORT:-8080}"
     volumes:
       - ./src:/app/src
       - ./prisma:/app/prisma
@@ -67,7 +67,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-sistema_despesas}
     ports:
-      - "${PORT:-3001}:${PORT:-3001}"
+      - "${PORT:-8080}:${PORT:-8080}"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -411,7 +411,7 @@ npx prisma migrate deploy
 npm run dev
 ```
 
-A API sobe em `http://localhost:3001`.
+A API sobe em `http://localhost:8080`.
 
 ### Docker Compose
 
@@ -442,7 +442,7 @@ configuração inválida.
 | Variável | Obrigatória | Padrão | Descrição |
 | --- | --- | --- | --- |
 | `NODE_ENV` | não | `development` | `development`, `test` ou `production` |
-| `PORT` | não | `3001` | Porta HTTP |
+| `PORT` | não | `8080` | Porta HTTP |
 | `DATABASE_URL` | **sim** | — | String de conexão do PostgreSQL |
 | `FRONTEND_URL` | não | `http://localhost:3000` | Origem do CORS e destino do redirect pós-OAuth |
 | `JWT_SECRET` | **sim** | — | Mínimo de 32 caracteres |
