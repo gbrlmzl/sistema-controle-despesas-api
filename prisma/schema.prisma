@@ -35,6 +35,10 @@ model User {
   monthClosures MonthClosure[]
   passwordResetTokens PasswordResetToken[]
   passwordResetAttempts PasswordResetAttempt[]
+  settlementsAsPayer    Settlement[]     @relation("SettlementPayer")
+  settlementsAsReceiver Settlement[]     @relation("SettlementReceiver")
+  settlementWaivers     Settlement[]     @relation("SettlementWaiver")
+  paymentReceipts       PaymentReceipt[]
 }
 
 model UserAuthProvider {
@@ -161,6 +165,10 @@ enum NotificationType {
   MEMBER_REMOVED
   OWNERSHIP_TRANSFERRED
   MONTH_CLOSED
+  SETTLEMENT_PENDING //D-08: mês fechado e você tem um acerto — o texto diz o lado e o valor
+  SETTLEMENT_READY //D-08: todos os pagadores liquidaram; recebedores, confirmem
+  MONTH_SETTLED //D-08: competência inteiramente acertada
+  SETTLEMENT_WAIVED //D-08: o owner dispensou o seu acerto
 }
 
 //RN-052 -> Contador de tentativas de entrada por código, guardado no banco para
@@ -212,10 +220,103 @@ model MonthClosure {
   year Int
   closedById Int
   closedAt DateTime @default(now())
+  //D-22 -> Carimbo de auditoria, NÃO fonte da verdade: o estado do mês é derivado das
+  //linhas de Settlement (todas liquidadas ou dispensadas). Existe para exibir a data e
+  //para não publicar MONTH_SETTLED duas vezes. RN-072: fechamento sem nenhum saldo
+  //diferente de zero nasce com este campo preenchido.
+  settledAt DateTime?
 
   @@unique([residenceId, year, month])
   residence Residence @relation(fields: [residenceId], references: [id], onDelete: Cascade)
   closedBy User @relation(fields: [closedById], references: [id])
+  settlements Settlement[]
+}
+
+//RN-070 -> O acerto de um PAR devedor→credor numa competência fechada, resultado do
+//algoritmo de simplificação de dívidas (D-29). A linha é criada no fechamento com o
+//valor JÁ CALCULADO (D-21) e nunca mais é recalculada — quem entra ou sai da residência
+//depois não muda acerto nenhum. Sem esse congelamento, "quem ainda deve agosto?" mudaria
+//de resposta conforme a composição da casa.
+//
+//RN-071 -> Uma linha por PAR, não por pessoa. Uma pessoa pode aparecer em várias linhas
+//da mesma competência (como payer em mais de um par, ou como receiver em mais de um —
+//nunca os dois ao mesmo tempo, porque o saldo líquido dela já tinha um sinal só antes de
+//virar par, RN-066). A soma de amountInCents de todas as linhas em que alguém é payer
+//é o total que ela deve na competência; o mesmo vale para receiver.
+model Settlement {
+  id            String    @id @default(uuid())
+  closureId     Int
+  payerId       Int
+  receiverId    Int
+  //Sempre positivo: quanto o payer deve ao receiver NESTE par.
+  amountInCents Int
+  //D-30 -> o devedor deste par liquidou o SEU lado, anexando comprovante (RN-074).
+  paidAt        DateTime?
+  //D-30 -> o credor deste par liquidou o SEU lado, confirmando o recebimento (RN-075).
+  //Os dois lados vivem na mesma linha porque o par já os une; não há ordem entre eles
+  //(RN-076). A linha está "liquidada" (D-20) quando os dois existem, ou quando waivedAt
+  //existe.
+  confirmedAt   DateTime?
+  //D-07 -> Saída para os dois estados sem saída: o devedor que saiu e não consegue mais
+  //anexar, e o credor que nunca abre o app. Dispensa a linha inteira, nos dois lados de
+  //uma vez — nunca é o mesmo que liquidada: fica registrada como dispensa, com autor e
+  //motivo (RN-082).
+  waivedAt      DateTime?
+  waivedById    Int?
+  waiveReason   String?
+  createdAt     DateTime  @default(now())
+
+  //Um par (devedor, credor) por fechamento — o algoritmo de D-29 nunca produz dois pares
+  //iguais no mesmo fechamento, mas a constraint barra corrida se o fechamento disparar
+  //duas vezes.
+  @@unique([closureId, payerId, receiverId])
+  //Alimenta "o que eu devo" e "o que tenho a receber" sem varrer a tabela.
+  @@index([payerId, paidAt])
+  @@index([receiverId, confirmedAt])
+
+  //Cascade: só dispara quando o fechamento é apagado, e RN-077 já impede apagar um
+  //fechamento que tenha comprovante confirmado. Na prática, só limpa acerto intocado.
+  closure  MonthClosure     @relation(fields: [closureId], references: [id], onDelete: Cascade)
+  payer    User             @relation("SettlementPayer", fields: [payerId], references: [id])
+  receiver User             @relation("SettlementReceiver", fields: [receiverId], references: [id])
+  waivedBy User?            @relation("SettlementWaiver", fields: [waivedById], references: [id])
+  receipts PaymentReceipt[]
+}
+
+//D-23 -> O comprovante em si, sempre do lado PAYER (RN-074): não existe comprovante de
+//recebimento, porque não há prova que o sistema consiga ver de "caiu na minha conta".
+//Nasce PENDING junto com a URL de upload e só vira STORED depois que a API confirma, no
+//S3, que o objeto existe e que os primeiros bytes batem com o tipo declarado. Um PENDING
+//não conta para nada: se o navegador desistir no meio, o acerto continua pendente e a
+//linha é limpa pela purga (D-26).
+model PaymentReceipt {
+  id                  String        @id @default(uuid())
+  settlementId        String
+  //D-27 -> Chave completa do objeto no bucket. Única: duas linhas nunca apontam para o
+  //mesmo objeto, então apagar uma nunca cega a outra.
+  storageKey          String        @unique
+  status              ReceiptStatus @default(PENDING)
+  //O que o cliente PEDIU para enviar (usado para assinar a política do POST).
+  declaredContentType String
+  //O que o S3 relatou de fato no HeadObject. Divergência = confirmação recusada.
+  contentType         String?
+  sizeInBytes         Int?
+  originalName        String?
+  uploadedById        Int
+  createdAt           DateTime      @default(now())
+  storedAt            DateTime?
+
+  @@index([settlementId, status])
+  //Alimenta a purga de órfãos (D-26) sem varrer a tabela.
+  @@index([status, createdAt])
+
+  settlement Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  uploadedBy User       @relation(fields: [uploadedById], references: [id])
+}
+
+enum ReceiptStatus {
+  PENDING
+  STORED
 }
 
 //Token de redefinição de senha por email. Mesmo padrão do RefreshToken: o valor em si
