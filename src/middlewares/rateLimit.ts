@@ -1,5 +1,5 @@
 import rateLimit, { type Options } from 'express-rate-limit';
-import { env } from '../config/env.js';
+import { env, rateLimitDisabled } from '../config/env.js';
 import { logSecurityEvent } from '../utils/logger.js';
 
 // SEC-01 -> Limitadores de requisição. Sem eles, `POST /auth/login` aceita tentativas
@@ -27,7 +27,11 @@ export function setRateLimitersArmedInTests(armed: boolean): void {
   armedInTests = armed;
 }
 
-const disabledInTest = (): boolean => env.NODE_ENV === 'test' && !armedInTests;
+// Duas razões distintas para não contar uma requisição: a suíte de integração da
+// própria API (acima) e a suíte e2e do front, que roda contra a API em development e
+// precisa de mais cadastros por hora do que o REGISTER_LIMIT permite
+// (RATE_LIMIT_DISABLED, ignorada em produção — ver src/config/env.ts).
+const shouldSkip = (): boolean => rateLimitDisabled || (env.NODE_ENV === 'test' && !armedInTests);
 
 // Exportada para os testes: como as opções são espalhadas por último, um teste
 // consegue armar o limitador em ambiente de test passando `skip: () => false`.
@@ -39,7 +43,7 @@ export function buildLimiter(name: string, options: Partial<Options>) {
   return rateLimit({
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    skip: disabledInTest,
+    skip: shouldSkip,
     // SEC-10 -> Substitui o handler padrão da biblioteca só pra registrar o evento; a
     // resposta continua idêntica (mesmo status, mesma mensagem configurada). O header
     // `Retry-After` é setado pela própria biblioteca antes de chegar aqui.

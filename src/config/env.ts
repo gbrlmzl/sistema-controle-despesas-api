@@ -34,6 +34,12 @@ const envSchema = z
     // (proteção CSRF do passport-oauth2) — não guarda sessão de usuário nenhuma.
     COOKIE_SESSION_SECRET: optionalString(z.string().min(32)),
 
+    // Desarma os rate limiters (SEC-01) para a suíte e2e do front, que precisa de ~19
+    // cadastros por execução contra um teto de 10/hora por IP — sem isso, a suíte testa
+    // o limitador em vez das telas. Só tem efeito em development: ver rateLimitDisabled
+    // no fim deste arquivo.
+    RATE_LIMIT_DISABLED: z.preprocess((v) => (v === '' ? undefined : v), z.stringbool().default(false)),
+
     // Recuperação de senha por email (ver docs/plano-recuperacao-de-senha.md).
     PASSWORD_RESET_TOKEN_EXPIRES_IN: z.string().default('30m'),
     // Caminho da tela de redefinição no front-end (o link = FRONTEND_URL + este caminho + ?token=)
@@ -93,6 +99,13 @@ export const googleAuthEnabled =
   env.GOOGLE_CLIENT_SECRET !== undefined &&
   env.GOOGLE_CALLBACK_URL !== undefined &&
   env.COOKIE_SESSION_SECRET !== undefined;
+
+// Um interruptor de proteção de segurança nunca deve depender só de alguém não ter
+// copiado a variável errada pro servidor: `RATE_LIMIT_DISABLED=true` em produção é
+// ignorado aqui, de propósito. Em test também é ignorado, porque lá quem manda é o
+// setRateLimitersArmedInTests() (ver src/middlewares/rateLimit.ts) — senão a variável
+// no .env da máquina quebraria os testes que exercitam os limitadores de verdade.
+export const rateLimitDisabled = env.RATE_LIMIT_DISABLED && env.NODE_ENV === 'development';
 
 // D-08 -> Sem as 5 variáveis, a API sobe normalmente e o envio de email só é
 // registrado em log (ver src/lib/mailer.ts) — nunca sai de verdade.
