@@ -2,6 +2,12 @@ import prisma from '../../config/prisma.js';
 import type { ExpenseCategory } from '../../generated/client.js';
 import { loadUserResidenceContext } from '../residences/residencesService.js';
 import { getOpenCompetency, type Competency } from '../expenses/expensesService.js';
+//3.1 do plano de acertos -> calculateSplit mora em splitService.ts agora (ela usa só
+//`prisma`, sem importar nenhum service, o que evita ciclo com expensesService.ts).
+//Reexportada aqui para não quebrar quem já importa calculateSplit de reportsService
+//(e importada normalmente, não só re-exportada, porque este arquivo também a usa abaixo).
+import { calculateSplit } from './splitService.js';
+export { calculateSplit };
 
 //RN-062 -> o gráfico de evolução mostra as últimas 6 competências
 export const COMPETENCIES_IN_EVOLUTION = 6;
@@ -131,61 +137,6 @@ export async function evolutionSeries(
       };
     }),
   );
-}
-
-//FEAT-029 -> rateio por divisão igual, como no cálculo da V1. RN-065 -> a cota é
-//dividida entre os membros atuais. Quem sai leva junto os lançamentos da competência
-//aberta (RN-022), então o total não fica inflado por gastos de quem não está mais na casa.
-export async function calculateSplit(residenceId: number, month: number, year: number) {
-  const [members, expenses] = await Promise.all([
-    prisma.membership.findMany({
-      where: { residenceId },
-      orderBy: { joinedAt: 'asc' },
-      select: { userId: true, user: { select: { name: true } } },
-    }),
-    prisma.expense.findMany({
-      where: baseFilter(residenceId, month, year, null),
-      select: { createdById: true, valueInCents: true },
-    }),
-  ]);
-
-  const totalInCents = expenses.reduce((sum, expense) => sum + expense.valueInCents, 0);
-  const memberCount = members.length;
-
-  if (memberCount === 0 || totalInCents === 0) {
-    return { shareInCents: 0, totalInCents, participants: [], hasSplit: false };
-  }
-
-  //RN-066 -> a divisão em centavos raramente é exata. A sobra é distribuída de um em
-  //um centavo entre os primeiros participantes, o que mantém a soma das cotas igual
-  //ao total e, por consequência, a soma dos saldos exatamente em zero.
-  const baseShare = Math.floor(totalInCents / memberCount);
-  const remainder = totalInCents - baseShare * memberCount;
-
-  const spentByMember = new Map<number, number>();
-  for (const expense of expenses) {
-    spentByMember.set(expense.createdById, (spentByMember.get(expense.createdById) ?? 0) + expense.valueInCents);
-  }
-
-  const participants = members
-    .map((member, index) => {
-      const shareInCents = baseShare + (index < remainder ? 1 : 0);
-      const spentInCents = spentByMember.get(member.userId) ?? 0;
-      const balanceInCents = spentInCents - shareInCents;
-
-      return {
-        userId: member.userId,
-        name: member.user.name,
-        spentInCents,
-        shareInCents,
-        balanceInCents,
-        receives: balanceInCents > 0,
-        pays: balanceInCents < 0,
-      };
-    })
-    .sort((a, b) => b.balanceInCents - a.balanceInCents);
-
-  return { shareInCents: baseShare, totalInCents, participants, hasSplit: true };
 }
 
 //FEAT-035 -> média das competências anteriores por categoria, para sinalizar desvios.
