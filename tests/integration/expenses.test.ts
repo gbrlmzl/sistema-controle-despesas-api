@@ -54,6 +54,22 @@ async function createResidenceWithMember(
   return { owner, member, code };
 }
 
+// Junta mais um membro a uma residência já existente, pelo mesmo fluxo de convite.
+// Usado pelos testes de D-29 (simplificação de dívidas), que precisam de mais de 2
+// participantes para gerar pares devedor→credor de verdade.
+async function addMemberToResidence(owner: RegisteredUser, code: string, memberName: string): Promise<RegisteredUser> {
+  const member = await registerUser(memberName);
+  await member.agent.post('/residences/join-requests').send({ code });
+
+  const detail = await owner.agent.get(`/residences/${code}`);
+  const request = detail.body.pendingJoinRequests.find(
+    (r: { requesterUsername: string }) => r.requesterUsername === member.username,
+  );
+  await owner.agent.patch(`/residences/join-requests/${request.id}`).send({ status: 'accepted' });
+
+  return member;
+}
+
 const now = new Date();
 const currentMonth = now.getMonth() + 1;
 const currentYear = now.getFullYear();
@@ -135,6 +151,8 @@ describe('lançamento e consulta de despesas', () => {
     expect(response.body.totalInCents).toBe(18050 + 3990);
     expect(response.body.count).toBe(2);
     expect(response.body.isClosed).toBe(false);
+    //§6.7 -> competência aberta não tem acerto nenhum.
+    expect(response.body.settlement).toBeNull();
 
     const memberGroup = response.body.byMember.find((group: { userId: number }) => group.userId === member.id);
     expect(memberGroup.totalInCents).toBe(18050);
@@ -270,6 +288,124 @@ describe('fechamento e reabertura de mês', () => {
   it('reabrir de novo dá 404 (não há mais mês fechado)', async () => {
     const response = await owner.agent.delete(`/residences/${code}/expenses/month-closures/${currentPeriod}`);
     expect(response.status).toBe(404);
+  });
+});
+
+describe('acertos criados no fechamento (D-21/D-29)', () => {
+  it('fechamento sem nenhum saldo diferente de zero nasce quitado (RN-072)', async () => {
+    const owner = await registerUser('Dono Sem Saldo');
+    const created = await owner.agent.post('/residences').send({ name: 'Casa Sem Saldo' });
+    const code = created.body.residence.code;
+
+    const response = await owner.agent
+      .post(`/residences/${code}/expenses/month-closures`)
+      .send({ month: currentMonth, year: currentYear });
+
+    expect(response.status).toBe(201);
+    expect(response.body.settlementsCreated).toBe(0);
+    expect(response.body.closure.settledAt).not.toBeNull();
+  });
+
+  it('2 devedores e 2 credores criam as linhas de par que simplifyDebts produz (RN-070/071)', async () => {
+    const owner = await registerUser('Dono Pares');
+    const created = await owner.agent.post('/residences').send({ name: 'Casa Pares' });
+    const code = created.body.residence.code;
+
+    const memberB = await addMemberToResidence(owner, code, 'Membro B Pares');
+    const memberC = await addMemberToResidence(owner, code, 'Membro C Pares');
+    const memberD = await addMemberToResidence(owner, code, 'Membro D Pares');
+
+    // 4 participantes (owner=A, B, C, D). Só C e D gastam, 20000 cada (total 40000),
+    // então a cota (10000 cada) deixa A e B devedores de 10000 e C e D credores de
+    // 10000 — dois devedores e dois credores, nenhum saldo residual.
+    await memberC.agent
+      .post(`/residences/${code}/expenses`)
+      .send({ name: 'Aluguel', valueInCents: 20000, category: 'DOMESTICAS', isRecurring: false });
+    await memberD.agent
+      .post(`/residences/${code}/expenses`)
+      .send({ name: 'Condomínio', valueInCents: 20000, category: 'DOMESTICAS', isRecurring: false });
+
+    const response = await owner.agent
+      .post(`/residences/${code}/expenses/month-closures`)
+      .send({ month: currentMonth, year: currentYear });
+
+    expect(response.status).toBe(201);
+    expect(response.body.settlementsCreated).toBe(2);
+
+    const residence = await prisma.residence.findUnique({ where: { code }, select: { id: true } });
+    const closure = await prisma.monthClosure.findUnique({
+      where: { residenceId_year_month: { residenceId: residence!.id, year: currentYear, month: currentMonth } },
+      select: { id: true },
+    });
+    const settlements = await prisma.settlement.findMany({ where: { closureId: closure!.id } });
+
+    expect(settlements).toHaveLength(2);
+
+    // Nenhum devedor nem credor sobra com saldo residual: a soma que cada um paga
+    // bate exatamente com a cota que faltava, e a soma que cada um recebe bate
+    // exatamente com o que gastou a mais.
+    const totalByPayer = new Map<number, number>();
+    const totalByReceiver = new Map<number, number>();
+    for (const s of settlements) {
+      totalByPayer.set(s.payerId, (totalByPayer.get(s.payerId) ?? 0) + s.amountInCents);
+      totalByReceiver.set(s.receiverId, (totalByReceiver.get(s.receiverId) ?? 0) + s.amountInCents);
+    }
+    expect([...totalByPayer.values()]).toEqual([10000, 10000]);
+    expect([...totalByReceiver.values()]).toEqual([10000, 10000]);
+
+    //§6.7 -> o bloco `settlement` embutido em GET /expenses (Fase 6). O owner é
+    //devedor de um único par nesta competência, nada liquidado ainda.
+    const ownerExpenses = await owner.agent.get(`/residences/${code}/expenses?month=${currentMonth}&year=${currentYear}`);
+    expect(ownerExpenses.body.settlement).toMatchObject({
+      status: 'AWAITING_PAYMENT',
+      totals: { payerSide: { lines: 2, paid: 0 }, receiverSide: { lines: 2, confirmed: 0 } },
+    });
+    expect(ownerExpenses.body.settlement.mine).toEqual([
+      expect.objectContaining({ role: 'PAYER', amountInCents: 10000, status: 'PENDING' }),
+    ]);
+  });
+
+  it('reabrir um mês com comprovante STORED devolve 409 (RN-077)', async () => {
+    const owner = await registerUser('Dono Comprovante');
+    const member = await registerUser('Membro Comprovante');
+    const created = await owner.agent.post('/residences').send({ name: 'Casa Comprovante' });
+    const code = created.body.residence.code;
+
+    await member.agent.post('/residences/join-requests').send({ code });
+    const detail = await owner.agent.get(`/residences/${code}`);
+    await owner.agent
+      .patch(`/residences/join-requests/${detail.body.pendingJoinRequests[0].id}`)
+      .send({ status: 'accepted' });
+
+    await member.agent
+      .post(`/residences/${code}/expenses`)
+      .send({ name: 'Mercado', valueInCents: 10000, category: 'ALIMENTACAO', isRecurring: false });
+
+    await owner.agent.post(`/residences/${code}/expenses/month-closures`).send({ month: currentMonth, year: currentYear });
+
+    const residence = await prisma.residence.findUnique({ where: { code }, select: { id: true } });
+    const closure = await prisma.monthClosure.findUnique({
+      where: { residenceId_year_month: { residenceId: residence!.id, year: currentYear, month: currentMonth } },
+      select: { id: true },
+    });
+    const settlement = await prisma.settlement.findFirstOrThrow({ where: { closureId: closure!.id } });
+
+    // Criado direto no banco (em vez de passar pelo fluxo real de upload) só para
+    // exercitar o bloqueio de reabertura (RN-077) de forma determinística.
+    await prisma.paymentReceipt.create({
+      data: {
+        settlementId: settlement.id,
+        storageKey: `residences/_test/${settlement.id}.jpg`,
+        status: 'STORED',
+        declaredContentType: 'image/jpeg',
+        contentType: 'image/jpeg',
+        sizeInBytes: 1000,
+        uploadedById: settlement.payerId,
+      },
+    });
+
+    const response = await owner.agent.delete(`/residences/${code}/expenses/month-closures/${currentPeriod}`);
+    expect(response.status).toBe(409);
   });
 });
 
