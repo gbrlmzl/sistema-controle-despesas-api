@@ -17,7 +17,8 @@
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "prisma:generate": "prisma generate",
     "purge:tokens": "node dist/scripts/purgeTokens.js",
-    "mail:test": "tsx src/scripts/testMail.ts"
+    "mail:test": "tsx src/scripts/testMail.ts",
+    "storage:test": "tsx src/scripts/testStorage.ts"
   },
   "repository": {
     "type": "git",
@@ -32,6 +33,9 @@
   },
   "homepage": "https://github.com/gbrlmzl/sistema-controle-despesas-api#readme",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1117.0",
+    "@aws-sdk/s3-presigned-post": "^3.1117.0",
+    "@aws-sdk/s3-request-presigner": "^3.1117.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "bcrypt": "^6.0.0",

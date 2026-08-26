@@ -56,6 +56,29 @@ const envSchema = z
     // acima intercepta a string vazia antes da coação, mas aqui não dá pra reusar o
     // helper (ele exige saída string; a saída aqui é number).
     SMTP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional()),
+
+    // Armazenamento de comprovantes (Amazon S3, D-14/D-18). S3_REGION e S3_BUCKET são o
+    // par que LIGA o upload — ver storageEnabled abaixo. Credenciais explícitas são só
+    // para desenvolvimento: em produção ficam vazias e o SDK resolve pela provider chain
+    // (role da task do ECS), por isso elas NÃO entram na conta de storageEnabled.
+    S3_REGION: optionalString(z.string()),
+    S3_BUCKET: optionalString(z.string()),
+    S3_ACCESS_KEY_ID: optionalString(z.string()),
+    S3_SECRET_ACCESS_KEY: optionalString(z.string()),
+    // Só para apontar a um S3 compatível (MinIO/LocalStack) — vazio é AWS de verdade.
+    S3_ENDPOINT: optionalString(z.url()),
+
+    RECEIPT_MAX_SIZE_BYTES: z.coerce.number().int().positive().default(5242880),
+    // Mesmo preprocess do SMTP_PORT: z.coerce.number() transforma '' em 0 e o default
+    // nunca dispararia.
+    RECEIPT_UPLOAD_URL_EXPIRES_IN: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.coerce.number().int().positive().default(300),
+    ),
+    RECEIPT_DOWNLOAD_URL_EXPIRES_IN: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.coerce.number().int().positive().default(300),
+    ),
   })
   .refine(
     (data) =>
@@ -82,6 +105,17 @@ const envSchema = z
     {
       message: 'SMTP_HOST, SMTP_USER, SMTP_PORT, SMTP_PASSWORD e MAIL_FROM devem ser todos fornecidos juntos, ou nenhum deles.',
       path: ['SMTP_HOST'],
+    },
+  )
+  .refine((data) => (data.S3_REGION !== undefined) === (data.S3_BUCKET !== undefined), {
+    message: 'S3_REGION e S3_BUCKET devem ser fornecidos juntos, ou nenhum dos dois.',
+    path: ['S3_REGION'],
+  })
+  .refine(
+    (data) => (data.S3_ACCESS_KEY_ID !== undefined) === (data.S3_SECRET_ACCESS_KEY !== undefined),
+    {
+      message: 'S3_ACCESS_KEY_ID e S3_SECRET_ACCESS_KEY devem ser fornecidos juntos, ou nenhum dos dois.',
+      path: ['S3_ACCESS_KEY_ID'],
     },
   );
 
@@ -115,3 +149,10 @@ export const mailEnabled =
   env.MAIL_FROM !== undefined &&
   env.SMTP_PASSWORD !== undefined &&
   env.SMTP_PORT !== undefined;
+
+// D-18 -> Só a REGIÃO e o BUCKET decidem se o storage está ligado. A credencial fica de
+// fora dessa conta de propósito: em produção ela nunca vem do .env (vem da role da task
+// do ECS, resolvida pelo SDK sozinho), então exigi-la aqui desligaria a funcionalidade
+// justamente no ambiente em que ela deve estar ligada. Sem S3_REGION + S3_BUCKET, a API
+// sobe normalmente e só o anexo/leitura de comprovante responde 503 (D-23/D-25).
+export const storageEnabled = env.S3_REGION !== undefined && env.S3_BUCKET !== undefined;
