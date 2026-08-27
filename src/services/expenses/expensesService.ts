@@ -3,6 +3,23 @@ import { AppError } from '../../utils/AppError.js';
 import type { ExpenseCategory } from '../../generated/client.js';
 import { loadUserResidenceContext } from '../residences/residencesService.js';
 import { createNotifications } from '../notifications/notificationsService.js';
+import { calculateSplit, simplifyDebts, type DebtPair } from '../reports/splitService.js';
+import { getCompetencySettlementSummary } from '../payments/settlementsService.js';
+
+//D-08 -> valores em centavos viram texto de notificação ("R$ 219,10"). Só usado aqui:
+//o resto da API trabalha em centavos, e formatar é responsabilidade de quem publica o
+//texto (RN-083), não do model Notification.
+const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+function formatCents(amountInCents: number): string {
+  return currencyFormatter.format(amountInCents / 100);
+}
+
+//"a, b e c" -> lista em português com "e" antes do último item, sem vírgula sobrando.
+function joinWithE(parts: string[]): string {
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} e ${parts[parts.length - 1]}`;
+}
 
 export interface Competency {
   month: number;
@@ -50,8 +67,8 @@ export function getNextCompetency({ month, year }: Competency): Competency {
 
 //Q-1 a Q-4 -> todos os membros veem todas as despesas da competência, agrupadas por
 //autor, com total por membro e total geral.
-export async function listExpensesForCompetency(residenceId: number, month: number, year: number) {
-  const [expenses, closure] = await Promise.all([
+export async function listExpensesForCompetency(residenceId: number, month: number, year: number, userId: number) {
+  const [expenses, closure, settlement] = await Promise.all([
     prisma.expense.findMany({
       where: {
         residenceId,
@@ -75,6 +92,11 @@ export async function listExpensesForCompetency(residenceId: number, month: numb
       where: { residenceId_year_month: { residenceId, year, month } },
       select: { closedAt: true, closedBy: { select: { name: true } } },
     }),
+    //§6.7 -> em paralelo com as duas consultas acima, não um round trip serial. É
+    //null quando a competência está aberta OU quando o fechamento não tem nenhuma
+    //linha de acerto (D-09: fechamento anterior a esta funcionalidade, sem
+    //migração de dados) -- as duas situações são lidas como "nada a acertar".
+    getCompetencySettlementSummary(residenceId, month, year, userId),
   ]);
 
   interface MemberGroup {
@@ -124,6 +146,7 @@ export async function listExpensesForCompetency(residenceId: number, month: numb
     isClosed: Boolean(closure),
     closedAt: closure?.closedAt ?? null,
     closedByName: closure?.closedBy?.name ?? null,
+    settlement, //§6.7 -> nenhum campo existente acima muda de nome, tipo ou semântica
   };
 }
 
@@ -280,7 +303,7 @@ export async function listUserRecurringExpenses(residenceId: number, userId: num
 export async function getResidenceExpenses(code: string, userId: number, requestedCompetency: Competency | null) {
   const context = await loadUserResidenceContext(code, userId);
   const competency = requestedCompetency ?? (await getOpenCompetency(context.residence.id));
-  const summary = await listExpensesForCompetency(context.residence.id, competency.month, competency.year);
+  const summary = await listExpensesForCompetency(context.residence.id, competency.month, competency.year, userId);
 
   return { competency, ...summary };
 }
@@ -378,14 +401,41 @@ export async function closeMonth(code: string, userId: number, requestedPeriod: 
 
   const next = getNextCompetency(competency);
 
-  const closure = await prisma.monthClosure.create({
-    data: {
-      residenceId: context.residence.id,
-      month: competency.month,
-      year: competency.year,
-      closedById: userId,
-    },
-    select: { id: true, month: true, year: true, closedAt: true },
+  //D-21 -> o rateio é calculado e congelado AGORA, em linhas de Settlement. Depois
+  //disso nada recalcula: sair ou entrar na residência não muda um acerto existente.
+  const split = await calculateSplit(context.residence.id, competency.month, competency.year);
+  //D-29 -> vira pares devedor→credor (D-01=B), não mais uma linha por participante.
+  const pairs: DebtPair[] = simplifyDebts(split.participants);
+
+  //Callback, não array: o `closureId` usado pelos acertos só existe depois que o
+  //fechamento é criado, e a forma de array do $transaction não permite encadear o
+  //resultado de uma operação nos dados da próxima.
+  const closure = await prisma.$transaction(async (tx) => {
+    const created = await tx.monthClosure.create({
+      data: {
+        residenceId: context.residence.id,
+        month: competency.month,
+        year: competency.year,
+        closedById: userId,
+        //RN-072 -> sem nenhum saldo diferente de zero, a competência nasce quitada:
+        //não há linha nenhuma para liquidar.
+        settledAt: pairs.length === 0 ? new Date() : null,
+      },
+      select: { id: true, month: true, year: true, closedAt: true, settledAt: true },
+    });
+
+    if (pairs.length > 0) {
+      await tx.settlement.createMany({
+        data: pairs.map((pair) => ({
+          closureId: created.id,
+          payerId: pair.payerId,
+          receiverId: pair.receiverId,
+          amountInCents: pair.amountInCents,
+        })),
+      });
+    }
+
+    return created;
   });
 
   //FEAT-025: as recorrentes do mês fechado renascem na competência seguinte
@@ -407,7 +457,50 @@ export async function closeMonth(code: string, userId: number, requestedPeriod: 
     })),
   );
 
-  return { closure, recurringExpensesGenerated };
+  //D-08/RN-083 -> SETTLEMENT_PENDING, uma notificação por PESSOA (nunca por linha):
+  //quem deve em vários pares recebe um texto só, somando os pares dela. D-31 garante
+  //que ninguém é payer e receiver ao mesmo tempo neste fechamento (o saldo líquido
+  //dela já tinha um sinal só antes de virar par), então os dois grupos não colidem.
+  if (pairs.length > 0) {
+    const namesByUserId = new Map(split.participants.map((p) => [p.userId, p.name]));
+    const settlementLink = `/app/residences/${context.residence.code}/settlements?mes=${competency.month}&ano=${competency.year}`;
+
+    const pairsByPayer = new Map<number, DebtPair[]>();
+    const pairsByReceiver = new Map<number, DebtPair[]>();
+    for (const pair of pairs) {
+      pairsByPayer.set(pair.payerId, [...(pairsByPayer.get(pair.payerId) ?? []), pair]);
+      pairsByReceiver.set(pair.receiverId, [...(pairsByReceiver.get(pair.receiverId) ?? []), pair]);
+    }
+
+    const settlementNotifications = [
+      ...[...pairsByPayer.entries()].map(([payerId, payerPairs]) => ({
+        userId: payerId,
+        type: 'SETTLEMENT_PENDING' as const,
+        title: 'Mês fechado',
+        message: `Você deve ${joinWithE(
+          payerPairs.map((p) => `${formatCents(p.amountInCents)} a ${namesByUserId.get(p.receiverId)}`),
+        )}.`,
+        linkTo: settlementLink,
+      })),
+      ...[...pairsByReceiver.entries()].map(([receiverId, receiverPairs]) => ({
+        userId: receiverId,
+        type: 'SETTLEMENT_PENDING' as const,
+        title: 'Mês fechado',
+        message: `Você tem ${joinWithE(
+          receiverPairs.map((p, index) =>
+            index === 0
+              ? `${formatCents(p.amountInCents)} a receber de ${namesByUserId.get(p.payerId)}`
+              : `${formatCents(p.amountInCents)} de ${namesByUserId.get(p.payerId)}`,
+          ),
+        )}.`,
+        linkTo: settlementLink,
+      })),
+    ];
+
+    await createNotifications(settlementNotifications);
+  }
+
+  return { closure, recurringExpensesGenerated, settlementsCreated: pairs.length };
 }
 
 //Reabrir é do owner, assim como fechar. Só o fechamento mais recente pode ser
@@ -437,6 +530,17 @@ export async function reopenMonth(code: string, userId: number, period: Competen
 
   if (latestClosure.month !== period.month || latestClosure.year !== period.year) {
     throw new AppError(409, 'Apenas o mês fechado mais recente pode ser reaberto.');
+  }
+
+  //RN-077 -> comprovante é registro financeiro; apagar por reabertura destruiria
+  //prova de pagamento. Uma vez que exista pelo menos um comprovante STORED, o
+  //fechamento (e os acertos dele) ficam travados para sempre.
+  const storedReceiptsCount = await prisma.paymentReceipt.count({
+    where: { status: 'STORED', settlement: { closureId: latestClosure.id } },
+  });
+
+  if (storedReceiptsCount > 0) {
+    throw new AppError(409, 'Este mês já tem comprovante de pagamento anexado e não pode ser reaberto.');
   }
 
   await prisma.monthClosure.delete({ where: { id: latestClosure.id } });

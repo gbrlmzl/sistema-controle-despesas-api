@@ -34,6 +34,12 @@ const envSchema = z
     // (proteção CSRF do passport-oauth2) — não guarda sessão de usuário nenhuma.
     COOKIE_SESSION_SECRET: optionalString(z.string().min(32)),
 
+    // Desarma os rate limiters (SEC-01) para a suíte e2e do front, que precisa de ~19
+    // cadastros por execução contra um teto de 10/hora por IP — sem isso, a suíte testa
+    // o limitador em vez das telas. Só tem efeito em development: ver rateLimitDisabled
+    // no fim deste arquivo.
+    RATE_LIMIT_DISABLED: z.preprocess((v) => (v === '' ? undefined : v), z.stringbool().default(false)),
+
     // Recuperação de senha por email (ver docs/plano-recuperacao-de-senha.md).
     PASSWORD_RESET_TOKEN_EXPIRES_IN: z.string().default('30m'),
     // Caminho da tela de redefinição no front-end (o link = FRONTEND_URL + este caminho + ?token=)
@@ -50,6 +56,29 @@ const envSchema = z
     // acima intercepta a string vazia antes da coação, mas aqui não dá pra reusar o
     // helper (ele exige saída string; a saída aqui é number).
     SMTP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional()),
+
+    // Armazenamento de comprovantes (Amazon S3, D-14/D-18). S3_REGION e S3_BUCKET são o
+    // par que LIGA o upload — ver storageEnabled abaixo. Credenciais explícitas são só
+    // para desenvolvimento: em produção ficam vazias e o SDK resolve pela provider chain
+    // (role da task do ECS), por isso elas NÃO entram na conta de storageEnabled.
+    S3_REGION: optionalString(z.string()),
+    S3_BUCKET: optionalString(z.string()),
+    S3_ACCESS_KEY_ID: optionalString(z.string()),
+    S3_SECRET_ACCESS_KEY: optionalString(z.string()),
+    // Só para apontar a um S3 compatível (MinIO/LocalStack) — vazio é AWS de verdade.
+    S3_ENDPOINT: optionalString(z.url()),
+
+    RECEIPT_MAX_SIZE_BYTES: z.coerce.number().int().positive().default(5242880),
+    // Mesmo preprocess do SMTP_PORT: z.coerce.number() transforma '' em 0 e o default
+    // nunca dispararia.
+    RECEIPT_UPLOAD_URL_EXPIRES_IN: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.coerce.number().int().positive().default(300),
+    ),
+    RECEIPT_DOWNLOAD_URL_EXPIRES_IN: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.coerce.number().int().positive().default(300),
+    ),
   })
   .refine(
     (data) =>
@@ -77,6 +106,17 @@ const envSchema = z
       message: 'SMTP_HOST, SMTP_USER, SMTP_PORT, SMTP_PASSWORD e MAIL_FROM devem ser todos fornecidos juntos, ou nenhum deles.',
       path: ['SMTP_HOST'],
     },
+  )
+  .refine((data) => (data.S3_REGION !== undefined) === (data.S3_BUCKET !== undefined), {
+    message: 'S3_REGION e S3_BUCKET devem ser fornecidos juntos, ou nenhum dos dois.',
+    path: ['S3_REGION'],
+  })
+  .refine(
+    (data) => (data.S3_ACCESS_KEY_ID !== undefined) === (data.S3_SECRET_ACCESS_KEY !== undefined),
+    {
+      message: 'S3_ACCESS_KEY_ID e S3_SECRET_ACCESS_KEY devem ser fornecidos juntos, ou nenhum dos dois.',
+      path: ['S3_ACCESS_KEY_ID'],
+    },
   );
 
 const parsed = envSchema.safeParse(process.env);
@@ -94,6 +134,13 @@ export const googleAuthEnabled =
   env.GOOGLE_CALLBACK_URL !== undefined &&
   env.COOKIE_SESSION_SECRET !== undefined;
 
+// Um interruptor de proteção de segurança nunca deve depender só de alguém não ter
+// copiado a variável errada pro servidor: `RATE_LIMIT_DISABLED=true` em produção é
+// ignorado aqui, de propósito. Em test também é ignorado, porque lá quem manda é o
+// setRateLimitersArmedInTests() (ver src/middlewares/rateLimit.ts) — senão a variável
+// no .env da máquina quebraria os testes que exercitam os limitadores de verdade.
+export const rateLimitDisabled = env.RATE_LIMIT_DISABLED && env.NODE_ENV === 'development';
+
 // D-08 -> Sem as 5 variáveis, a API sobe normalmente e o envio de email só é
 // registrado em log (ver src/lib/mailer.ts) — nunca sai de verdade.
 export const mailEnabled =
@@ -102,3 +149,10 @@ export const mailEnabled =
   env.MAIL_FROM !== undefined &&
   env.SMTP_PASSWORD !== undefined &&
   env.SMTP_PORT !== undefined;
+
+// D-18 -> Só a REGIÃO e o BUCKET decidem se o storage está ligado. A credencial fica de
+// fora dessa conta de propósito: em produção ela nunca vem do .env (vem da role da task
+// do ECS, resolvida pelo SDK sozinho), então exigi-la aqui desligaria a funcionalidade
+// justamente no ambiente em que ela deve estar ligada. Sem S3_REGION + S3_BUCKET, a API
+// sobe normalmente e só o anexo/leitura de comprovante responde 503 (D-23/D-25).
+export const storageEnabled = env.S3_REGION !== undefined && env.S3_BUCKET !== undefined;

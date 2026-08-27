@@ -141,6 +141,9 @@ erDiagram
     Residence ||--o{ JoinRequest : recebe
     Residence ||--o{ Expense : agrupa
     Residence ||--o{ MonthClosure : fecha
+    MonthClosure ||--o{ Settlement : gera
+    Settlement ||--o{ PaymentReceipt : recebe
+    User ||--o{ Settlement : "paga/recebe"
 ```
 
 | Modelo | Papel |
@@ -154,11 +157,14 @@ erDiagram
 | `JoinRequest` | Solicitação de fora para dentro (usuário digita o código) |
 | `JoinAttempt` | Contador de tentativas de código erradas — no banco, para sobreviver a restart e funcionar com várias instâncias |
 | `Expense` | Despesa numa competência (mês/ano). `valueInCents` em **centavos**: ponto flutuante acumula erro na soma e o rateio depende de totais exatos |
-| `MonthClosure` | Fechamento do mês pelo owner; competência fechada fica somente leitura |
+| `MonthClosure` | Fechamento do mês pelo owner; competência fechada fica somente leitura. `settledAt` é carimbo de auditoria — o estado de verdade é derivado das linhas de `Settlement` |
+| `Settlement` | Um **par devedor→credor** (`payerId`/`receiverId`) resultado da simplificação de dívidas no fechamento, com `amountInCents` já congelado. Liquidado quando `paidAt` **e** `confirmedAt` existem, ou quando `waivedAt` existe (dispensa do owner) |
+| `PaymentReceipt` | Comprovante de pagamento (sempre do lado devedor), armazenado no S3. Nasce `PENDING` junto com a URL de upload e só vira `STORED` depois que a API confirma o objeto no bucket |
 | `Notification` | Notificação genérica — `title`/`message`/`linkTo` já resolvidos por quem publica |
 
 Enums: `MembershipRole`, `AccessStatus`, `ExpenseCategory`
-(`ALIMENTACAO`, `DOMESTICAS`, `ASSINATURAS`, `LAZER`, `OUTROS`) e `NotificationType`.
+(`ALIMENTACAO`, `DOMESTICAS`, `ASSINATURAS`, `LAZER`, `OUTROS`), `NotificationType` e
+`ReceiptStatus` (`PENDING`, `STORED`).
 
 ---
 
@@ -257,6 +263,22 @@ sequenceDiagram
 - Rateio do total da casa entre os membros e percentual que o usuário representa do total.
 - Lista de despesas pronta para exportação.
 
+**Acertos e comprovantes de pagamento**
+- Ao fechar o mês, o rateio é **congelado** e simplificado num conjunto de **pares
+  devedor→credor** (algoritmo guloso, sem sobra de centavos).
+- Fluxo **simétrico**, por par: o devedor liquida **anexando comprovante**; o credor liquida
+  **confirmando o recebimento** daquele valor. Sem ordem obrigatória entre os dois lados.
+- Upload em **duas fases** direto do navegador para um bucket S3 privado (presigned POST) — o
+  arquivo nunca passa pela API. A confirmação verifica `HeadObject` + assinatura de arquivo
+  (magic bytes) sem trazer o conteúdo para a memória.
+- O owner pode **dispensar** um acerto travado (morador que saiu, credor que nunca confirma),
+  com motivo obrigatório — nunca fica registrado como liquidação.
+- **Funciona sem S3 configurado**: `storageEnabled` (mesmo mecanismo de `googleAuthEnabled` e
+  `mailEnabled`) desliga só o anexo/leitura de comprovante — o resto (fechamento, confirmação
+  de recebimento, dispensa) continua de pé.
+- Comprovantes órfãos (upload iniciado e nunca confirmado) são limpos por
+  `npm run purge:tokens`, no mesmo lote das outras purgas.
+
 **Notificações**
 - Publicadas por qualquer área do sistema (convite recebido, solicitação respondida, membro
   removido, propriedade transferida, mês fechado).
@@ -324,6 +346,20 @@ Respostas de erro seguem sempre o formato `{ "message": "..." }`.
 | `GET` | `/competencies` | Competências existentes e seus status |
 | `POST` | `/month-closures` | `{ month, year }` — fecha o mês (owner) |
 | `DELETE` | `/month-closures/:period` | Reabre o mês; `:period` no formato `AAAA-MM` |
+
+### Acertos — `/residences/:code/closures/:period` (`:period` em `AAAA-MM`)
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/settlements` | Lista os pares devedor→credor da competência fechada, com status derivado e comprovantes `STORED` |
+| `POST` | `/settlements/:settlementId/receipts` | `{ contentType, sizeInBytes, originalName? }` — abre a intenção de upload (só o devedor do par); `201` com a URL/campos do presigned POST |
+| `POST` | `/settlements/:settlementId/receipts/:receiptId/complete` | Sem corpo — confirma o objeto no S3 (`HeadObject` + magic bytes) e grava `paidAt` |
+| `POST` | `/settlements/:settlementId/confirm` | Sem corpo — o credor confirma o recebimento daquele par (`confirmedAt`) |
+| `POST` | `/settlements/:settlementId/waive` | `{ reason }` — o owner dispensa a linha inteira, com motivo de 3 a 200 caracteres |
+| `GET` | `/receipts/:receiptId/url` | URL pré-assinada de leitura, válida por 5 minutos, emitida sob demanda |
+
+`GET /residences/:code/expenses` embute um bloco `settlement` (status, totais e as linhas do
+usuário logado) quando a competência está fechada e tem pelo menos um acerto.
 
 ### Relatórios e notificações
 
@@ -459,6 +495,14 @@ configuração inválida.
 | `SMTP_USER` | condicional | — | de email só é registrado em log (sem |
 | `SMTP_PASSWORD` | condicional | — | recuperação de senha por email de verdade) |
 | `MAIL_FROM` | condicional | — | Remetente — precisa ser o mesmo endereço de `SMTP_USER` no Gmail |
+| `S3_REGION` | condicional | — | `S3_REGION` e `S3_BUCKET` juntos **ligam** o storage de comprovantes |
+| `S3_BUCKET` | condicional | — | (`storageEnabled`) — sem os dois, só o anexo/leitura de comprovante responde `503` |
+| `S3_ACCESS_KEY_ID` | condicional | — | Só em desenvolvimento; em produção fica vazia e o SDK usa a role da task do ECS |
+| `S3_SECRET_ACCESS_KEY` | condicional | — | juntas com `S3_ACCESS_KEY_ID` — ou nenhuma das duas |
+| `S3_ENDPOINT` | não | — | Aponta a um S3 compatível (MinIO/LocalStack); vazio é AWS de verdade |
+| `RECEIPT_MAX_SIZE_BYTES` | não | `5242880` | Teto de tamanho do comprovante (5 MB), aplicado pelo próprio S3 via presigned POST |
+| `RECEIPT_UPLOAD_URL_EXPIRES_IN` | não | `300` | Validade em segundos da URL de upload |
+| `RECEIPT_DOWNLOAD_URL_EXPIRES_IN` | não | `300` | Validade em segundos da URL de leitura |
 
 ---
 
@@ -472,11 +516,16 @@ npm test
 npm run test:coverage
 ```
 
-27 arquivos de teste, divididos entre `tests/unit/` (schemas Zod, regras dos services,
+33 arquivos de teste, divididos entre `tests/unit/` (schemas Zod, regras dos services,
 utilitários operacionais) e `tests/integration/` (Supertest contra o app real, com banco).
-A integração cobre os fluxos de auth, residências, despesas, notificações e usuários, além de
-casos especificamente de segurança: rate limiting, troca de senha, recuperação de senha por
-email, purga de tokens e emissão dos eventos de segurança.
+A integração cobre os fluxos de auth, residências, despesas, notificações, usuários e acertos
+de pagamento, além de casos especificamente de segurança: rate limiting, troca de senha,
+recuperação de senha por email, purga de tokens e emissão dos eventos de segurança.
+
+O armazenamento de comprovantes (`src/lib/storage.ts`) é uma porta injetável, no mesmo molde
+do envio de email: **nenhum teste automatizado abre conexão com a AWS**. Os testes trocam a
+implementação ativa por um fake em memória (`tests/helpers/fakeStorage.ts`) via
+`setStorageForTests`.
 
 Detalhe deliberado: **os limitadores ficam desarmados em `NODE_ENV=test`**, porque a suíte
 dispara dezenas de requisições nas mesmas rotas de propósito — do contrário ela testaria o
@@ -520,8 +569,9 @@ flowchart LR
 | `npm test` | Suíte completa |
 | `npm run test:coverage` | Suíte com relatório de cobertura |
 | `npm run prisma:generate` | Regera o Prisma Client |
-| `npm run purge:tokens` | Limpa refresh tokens e tokens de redefinição de senha expirados, e sai (agendado como task avulsa) |
+| `npm run purge:tokens` | Limpa refresh tokens, tokens de redefinição de senha e comprovantes órfãos expirados, e sai (agendado como task avulsa) |
 | `npm run mail:test -- destino@exemplo.com` | Envia um email de teste pelo SMTP configurado, para validar as credenciais |
+| `npm run storage:test` | Grava, lê, gera URL e apaga um objeto de teste no S3, para validar bucket e credencial |
 
 ---
 
@@ -538,6 +588,8 @@ escritas, discutidas e aprovadas antes do código.
   `INFRA-*` da camada AWS.
 - [`docs/plano-recuperacao-de-senha.md`](docs/plano-recuperacao-de-senha.md) — decisões
   (`D-*`) e roteiro de implementação da recuperação de senha por email.
+- [`docs/plano-registro-de-pagamentos.md`](docs/plano-registro-de-pagamentos.md) — decisões
+  (`D-*`/`RN-*`) e roteiro de implementação dos acertos de pagamento com comprovante no S3.
 - [`docs/exemplos-insomnia/`](docs/exemplos-insomnia) — exemplos de requisição.
 
 Os comentários no código explicam **por que** algo é daquele jeito, não o que a linha faz —

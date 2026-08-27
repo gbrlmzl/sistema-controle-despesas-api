@@ -11,13 +11,40 @@ import { purgeExpiredRefreshTokens } from '../services/auth/authService.js';
 import { purgeExpiredPasswordResetTokens } from '../services/auth/passwordResetService.js';
 import { logError } from '../utils/logger.js';
 import { runTokenPurge } from '../utils/tokenPurge.js';
+import { purgeOrphanReceipts } from '../utils/receiptPurge.js';
+import { storage } from '../lib/storage.js';
+import { storageEnabled } from '../config/env.js';
 
-const exitCode = await runTokenPurge({
+let exitCode = await runTokenPurge({
   purgeRefreshTokens: purgeExpiredRefreshTokens,
   purgePasswordResetTokens: purgeExpiredPasswordResetTokens,
-  disconnect: () => prisma.$disconnect(),
+  // A desconexão de verdade fica para o fim do script (ver abaixo): a purga de
+  // comprovantes órfãos, logo a seguir, ainda precisa do mesmo cliente Prisma.
+  disconnect: async () => {},
   log: (message) => console.log(message),
   logError,
 });
+
+// D-26 -> só roda com storage ligado; sem S3_REGION/S3_BUCKET não há bucket
+// nenhum de onde apagar objeto, e a linha PENDING fica esperando sem problema.
+if (storageEnabled) {
+  try {
+    const result = await purgeOrphanReceipts({ prisma, storage });
+    console.log(`Limpeza de comprovantes órfãos concluída: ${result.succeeded} removido(s), ${result.failed} falha(s).`);
+    if (result.failed > 0) {
+      exitCode = 1;
+    }
+  } catch (err) {
+    logError(err, 'purgeTokens/orphanReceipts');
+    exitCode = 1;
+  }
+}
+
+try {
+  await prisma.$disconnect();
+} catch (err) {
+  logError(err, 'purgeTokens/disconnect');
+  exitCode = 1;
+}
 
 process.exit(exitCode);

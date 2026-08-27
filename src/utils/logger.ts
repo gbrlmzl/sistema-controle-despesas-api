@@ -33,7 +33,12 @@ export type SecurityEventName =
   | 'password_reset_token_reuse'
   // Teto por conta (D-07) estourado: o email não foi enviado, mas a resposta HTTP
   // continua 200 (D-03), então este é o único lugar onde o evento fica visível.
-  | 'password_reset_throttled';
+  | 'password_reset_throttled'
+  // D-23 -> o objeto chegou no S3, mas o HeadObject ou os magic bytes não batem com
+  // o Content-Type declarado na intenção de upload. Pode ser um cliente quebrado,
+  // mas também é o sinal de alguém tentando subir um arquivo diferente do que a
+  // política do presigned POST autorizou.
+  | 'receipt_content_mismatch';
 
 // O IP só existe no `req`, e a camada de serviço não recebe `req` — passar o objeto
 // inteiro pra dentro dos services acoplaria regra de negócio ao Express. Este objeto
