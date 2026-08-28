@@ -42,6 +42,8 @@ Postgres diretamente.
 | Validação | Zod 4 | Schemas de entrada **e** validação das variáveis de ambiente |
 | Auth | `jsonwebtoken` + `bcrypt` + Passport (`passport-google-oidc`) | JWT curto + refresh token rotativo; Google OAuth opcional |
 | Segurança | `helmet`, `express-rate-limit`, `cors`, `cookie-parser` | Ver [Segurança](#segurança) |
+| Email | `nodemailer` sobre SMTP | Recuperação de senha; opcional — sem as variáveis SMTP o envio só vai para o log |
+| Armazenamento | AWS SDK v3 (`client-s3`, `s3-presigned-post`, `s3-request-presigner`) | Comprovantes em bucket S3 privado, com upload e leitura pré-assinados |
 | Testes | Jest 30 (ESM via `babel-jest`) + Supertest | Unitário + integração |
 | Empacotamento | Docker multi-stage + Docker Compose (perfis `dev`/`prod`) | Imagem final sem dev deps, rodando como usuário `node` |
 
@@ -106,14 +108,14 @@ src/
 │   ├── env.ts             # validação das env vars com Zod (falha rápido no boot)
 │   ├── prisma.ts          # Prisma Client singleton
 │   └── passport.ts        # estratégia Google OIDC (registrada só se configurada)
-├── controllers/           # auth, users, residences, expenses, reports, notifications
+├── controllers/           # auth, users, residences, expenses, payments, reports, notifications
 ├── services/              # regra de negócio + acesso ao banco (mesmos domínios)
 ├── routes/                # declaração dos endpoints por domínio
-├── schemas/               # schemas Zod de entrada (usuarios, residencias, despesas, notificacoes)
+├── schemas/               # schemas Zod de entrada (usuarios, residencias, despesas, notificacoes, acertos)
 ├── middlewares/           # auth, validate, rateLimit, errorHandler
-├── lib/                   # session.ts (cookies + emissão do par de tokens), username.ts
-├── utils/                 # AppError, logger, readiness, shutdown, tokenPurge
-├── scripts/               # purgeTokens.ts (job avulso de limpeza)
+├── lib/                   # session.ts, username.ts, mailer.ts, emailTemplates.ts, storage.ts
+├── utils/                 # AppError, logger, period, readiness, shutdown, tokenPurge, receiptPurge
+├── scripts/               # purgeTokens.ts (job avulso) + testMail.ts / testStorage.ts (checagem manual)
 └── generated/             # Prisma Client gerado — não editar, fora do coverage
 prisma/                    # schema.prisma + migrations
 tests/                     # unit/ e integration/
@@ -121,9 +123,16 @@ docs/                      # plano de arquitetura e revisão de segurança
 ```
 
 Um padrão recorrente: **comportamento operacional mora em `utils/` com dependências
-injetadas**, e o entrypoint só liga os fios. `shutdown.ts`, `readiness.ts` e `tokenPurge.ts`
-existem assim para serem testáveis sem subir servidor, derrubar o Postgres ou chamar
-`process.exit` de verdade.
+injetadas**, e o entrypoint só liga os fios. `shutdown.ts`, `readiness.ts`, `tokenPurge.ts` e
+`receiptPurge.ts` existem assim para serem testáveis sem subir servidor, derrubar o Postgres,
+falar com a AWS ou chamar `process.exit` de verdade. O mesmo vale para os recursos externos:
+`lib/mailer.ts` e `lib/storage.ts` são **portas com implementação trocável** — sem configuração
+o email apenas vai para o log e o storage responde `503`, e nos testes as duas viram fakes em
+memória.
+
+Uma exceção deliberada ao corte por domínio: `services/reports/splitService.ts` (rateio e
+simplificação de dívidas) não importa nenhum outro service, para que tanto `expensesService`
+(fechamento de mês) quanto `reportsService` possam usá-lo sem criar ciclo de import.
 
 ---
 
@@ -133,6 +142,7 @@ existem assim para serem testáveis sem subir servidor, derrubar o Postgres ou c
 erDiagram
     User ||--o{ Membership : participa
     User ||--o{ RefreshToken : possui
+    User ||--o{ PasswordResetToken : pede
     User ||--o{ UserAuthProvider : vincula
     User ||--o{ Notification : recebe
     User ||--o{ Expense : lanca
@@ -151,6 +161,8 @@ erDiagram
 | `User` | Conta. `username` é o identificador **público** (convite sem expor e-mail); `password` é opcional (contas só-Google) |
 | `UserAuthProvider` | Vínculo com provedor externo (`provider` + `providerId` únicos) |
 | `RefreshToken` | Sessão persistida. Guarda o **hash**, nunca o token; `familyId` agrupa a cadeia de rotação |
+| `PasswordResetToken` | Link de "esqueci minha senha". Mesmo padrão do `RefreshToken`: só o hash SHA-256 é guardado; `usedAt` significa "não vale mais" (consumido ou superado por um pedido novo) |
+| `PasswordResetAttempt` | Contador de pedidos de redefinição por conta, no banco — é o que sustenta o teto de 3 emails/hora mesmo com várias instâncias |
 | `Residence` | Casa compartilhada. `code` é um código público de 6 caracteres; `archivedAt` deixa a residência somente leitura |
 | `Membership` | Vínculo usuário↔residência com papel `OWNER` ou `MEMBER` |
 | `Invite` | Convite de dentro para fora (owner convida por username); expira em 7 dias |
@@ -251,8 +263,10 @@ sequenceDiagram
   com endpoint dedicado para interromper a recorrência.
 - Listagem por competência, listagem das recorrentes e listagem das competências existentes
   com status (aberta/fechada).
-- **Fechamento de mês** pelo owner: a competência vira somente leitura e a seguinte passa a ser
-  a aberta. A reabertura também é possível.
+- **Fechamento de mês** pelo owner: a competência vira somente leitura, a seguinte passa a ser a
+  aberta e o rateio é congelado em acertos (abaixo). Só o fechamento **mais recente** pode ser
+  reaberto — e a reabertura fica bloqueada de vez assim que existir um comprovante anexado
+  naquela competência: comprovante é registro financeiro, apagar destruiria prova de pagamento.
 
 **Relatórios**
 - Total e distribuição por categoria, com abas **residência** e **pessoal** (a pessoal olha só
@@ -276,12 +290,18 @@ sequenceDiagram
 - **Funciona sem S3 configurado**: `storageEnabled` (mesmo mecanismo de `googleAuthEnabled` e
   `mailEnabled`) desliga só o anexo/leitura de comprovante — o resto (fechamento, confirmação
   de recebimento, dispensa) continua de pé.
-- Comprovantes órfãos (upload iniciado e nunca confirmado) são limpos por
+- Formatos aceitos: **JPEG, PNG, WebP e PDF, até 5 MB**. SVG (XML executável), GIF e HEIC/HEIF
+  ficam de fora de propósito.
+- O ciclo inteiro notifica: `SETTLEMENT_PENDING` no fechamento (uma por pessoa, nunca por linha),
+  `SETTLEMENT_READY` quando todos os devedores já anexaram, `MONTH_SETTLED` quando a competência
+  fica inteiramente quitada e `SETTLEMENT_WAIVED` na dispensa.
+- Comprovantes órfãos (upload iniciado e nunca confirmado há mais de 24h) são limpos por
   `npm run purge:tokens`, no mesmo lote das outras purgas.
 
 **Notificações**
 - Publicadas por qualquer área do sistema (convite recebido, solicitação respondida, membro
-  removido, propriedade transferida, mês fechado).
+  removido, propriedade transferida, mês fechado, acerto pendente, acertos prontos para
+  confirmação, mês quitado, acerto dispensado).
 - Listagem paginada (20 por página, teto de 100) com contador de não lidas.
 - Marcar itens específicos ou todos como lidos.
 
@@ -361,6 +381,10 @@ Respostas de erro seguem sempre o formato `{ "message": "..." }`.
 `GET /residences/:code/expenses` embute um bloco `settlement` (status, totais e as linhas do
 usuário logado) quando a competência está fechada e tem pelo menos um acerto.
 
+O comprovante aceita `image/jpeg`, `image/png`, `image/webp` e `application/pdf`, até 5 MB. Com o
+storage desligado (sem `S3_REGION`/`S3_BUCKET`), **só** as rotas de comprovante respondem `503` —
+listar acertos, confirmar recebimento e dispensar continuam de pé.
+
 ### Relatórios e notificações
 
 | Método | Rota | Descrição |
@@ -388,6 +412,7 @@ documento.
 | Controle | Implementação |
 | --- | --- |
 | Rate limiting | Teto global de 120 req/min por IP; login 8/15min (só falhas contam), registro 10/h (sucesso conta), refresh 30/15min |
+| Desarmar limitador | `RATE_LIMIT_DISABLED=true` existe para a suíte e2e do front e **só tem efeito em `development`** — em produção e em `test` é ignorada, para que a variável copiada por engano num servidor não desligue a proteção |
 | `trust proxy` | Fixado em `1` — confiar na cadeia inteira deixaria qualquer cliente forjar `X-Forwarded-For` e escapar do limite |
 | Cabeçalhos | `helmet` com HSTS de 180 dias; CSP desligado (a API só devolve JSON) |
 | CORS | Origem única (`FRONTEND_URL`) com `credentials: true` |
@@ -395,7 +420,8 @@ documento.
 | Vazamento de erro | Em produção o cliente recebe `"Erro interno do servidor."`; nome de tabela, constraint e host do banco ficam só no log |
 | Paginação | Teto de 100 itens por página — sem isso, `?limit=1000000` trava uma conexão do banco |
 | Sessão | Cookies `httpOnly`, `secure` em produção, `sameSite: lax`; refresh rotativo com detecção de reuso |
-| Limpeza | `npm run purge:tokens` remove refresh tokens expirados/revogados (30 dias) e tokens/tentativas de redefinição de senha (7 dias) — job avulso, não `setInterval` dentro da API |
+| Comprovantes | Bucket privado e versionado; presigned POST com `content-length-range` e whitelist de 4 tipos, então o teto de 5 MB é aplicado pelo próprio S3. A API confere `HeadObject` + magic bytes antes de gravar `paidAt` e nunca serve o arquivo: leitura é sempre URL pré-assinada de 5 minutos |
+| Limpeza | `npm run purge:tokens` remove refresh tokens expirados/revogados (30 dias), tokens/tentativas de redefinição de senha (7 dias) e comprovantes `PENDING` com mais de 24h — o objeto no S3 junto com a linha — job avulso, não `setInterval` dentro da API |
 | Recuperação de senha | Rate limit dedicado (`/forgot-password` 5/h, `/reset-password*` 10/h por IP) + teto de 3 emails/hora por conta, cobrindo também a conta só-Google que não emite token |
 
 ---
@@ -407,8 +433,9 @@ documento.
 - **Eventos de segurança** — `logSecurityEvent` emite **JSON de uma linha** no stderr, com
   chaves estáveis, justamente para virar *metric filter* + alarme no CloudWatch. Eventos:
   `refresh_token_reuse`, `login_failed`, `rate_limit_exceeded`, `password_reset_token_reuse`,
-  `password_reset_throttled`. Nada de segredo é registrado — só identificadores e o IP de
-  origem.
+  `password_reset_throttled` e `receipt_content_mismatch` (o arquivo que chegou no bucket não
+  bate com o `Content-Type` declarado na intenção de upload). Nada de segredo é registrado — só
+  identificadores e o IP de origem.
 - **Liveness vs. readiness** — `/health` responde "o processo está vivo?" (reiniciar resolve) e
   não toca o banco; `/ready` responde "dá para atender agora?" e retorna `503` quando o
   Postgres não responde (tirar do balanceamento, não reiniciar).
@@ -488,6 +515,7 @@ configuração inválida.
 | `GOOGLE_CLIENT_SECRET` | condicional | — | juntas — ou nenhuma delas, e aí o |
 | `GOOGLE_CALLBACK_URL` | condicional | — | login com Google fica desabilitado |
 | `COOKIE_SESSION_SECRET` | condicional | — | Assina o cookie de `state` do OAuth (mín. 32 caracteres) |
+| `RATE_LIMIT_DISABLED` | não | `false` | Desarma os limitadores para a suíte e2e do front — **ignorada** fora de `development` |
 | `PASSWORD_RESET_TOKEN_EXPIRES_IN` | não | `30m` | Validade do link de redefinição de senha |
 | `PASSWORD_RESET_PATH` | não | `/change-password` | Caminho da tela de redefinição no front (compõe o link com `FRONTEND_URL`) |
 | `SMTP_HOST` | condicional | — | As cinco variáveis SMTP são exigidas |

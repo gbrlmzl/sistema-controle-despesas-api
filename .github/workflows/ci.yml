@@ -57,9 +57,16 @@ jobs:
         run: npm test
 
   build:
-    name: Build da imagem (docker compose --profile prod)
+    name: Build da imagem (docker compose --profile prod, ${{ matrix.platform }})
     needs: test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
     outputs:
       image: ${{ steps.meta.outputs.image }}
       sha_tag: ${{ steps.meta.outputs.sha_tag }}
@@ -79,32 +86,40 @@ jobs:
         run: |
           cat <<EOF > .env
           API_IMAGE=${{ steps.meta.outputs.image }}
-          IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}
+          IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}-${{ matrix.arch }}
           EOF
 
-      - name: Configurar QEMU (emulação ARM64 no runner x86_64)
+      # arm64 é o alvo de deploy (Graviton/t4g) e continua precisando de QEMU
+      # neste runner x86_64. amd64 é nativo aqui — existe para o job `publish`
+      # montar um manifest multi-arch: sem ele, o E2E do repo
+      # sistema-controle-despesas-deploy (que roda a stack completa num runner
+      # ubuntu-latest amd64) só encontra a variante arm64 e sobe a API inteira
+      # emulada. Sob QEMU, o hashing de senha do /auth/register passa dos 4s de
+      # timeout padrão do Cypress e a suíte falha de forma intermitente.
+      - name: Configurar QEMU (necessário só para o leg arm64, cross-build neste runner x86_64)
+        if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
 
       - name: Configurar Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build da imagem (linux/arm64 — destino são instâncias Graviton/t4g)
+      - name: Build da imagem (${{ matrix.platform }})
         env:
-          DOCKER_DEFAULT_PLATFORM: linux/arm64
+          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
         run: docker compose --profile prod build
 
       - name: Salvar imagens (api + migrate) para os próximos jobs
         run: |
           mkdir -p /tmp/images
           docker save \
-            "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}" \
-            "${{ steps.meta.outputs.image }}-migrate:${{ steps.meta.outputs.sha_tag }}" \
+            "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}-${{ matrix.arch }}" \
+            "${{ steps.meta.outputs.image }}-migrate:${{ steps.meta.outputs.sha_tag }}-${{ matrix.arch }}" \
             -o /tmp/images/app-images.tar
 
       - name: Upload das imagens como artifact
         uses: actions/upload-artifact@v4
         with:
-          name: docker-images
+          name: docker-images-${{ matrix.arch }}
           path: /tmp/images/app-images.tar
           retention-days: 1
 
@@ -116,10 +131,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Baixar imagens do job de build
+      - name: Baixar imagem amd64 do job de build (nativa neste runner — sem QEMU)
         uses: actions/download-artifact@v4
         with:
-          name: docker-images
+          name: docker-images-amd64
           path: /tmp/images
 
       - name: Carregar imagens no Docker local
@@ -137,12 +152,14 @@ jobs:
           JWT_EXPIRES_IN=15m
           REFRESH_TOKEN_EXPIRES_IN=7d
           API_IMAGE=${{ needs.build.outputs.image }}
-          IMAGE_TAG=${{ needs.build.outputs.sha_tag }}
+          IMAGE_TAG=${{ needs.build.outputs.sha_tag }}-amd64
           EOF
 
-      - name: Configurar QEMU (necessário para executar a imagem ARM64 neste runner x86_64)
-        uses: docker/setup-qemu-action@v3
-
+      # /health não exercita o bcrypt do /auth/register — como gate de
+      # prontidão ele passa mesmo com a API lenta sob emulação (era o caso do
+      # leg arm64 aqui antes desta mudança). Se este smoke test algum dia
+      # precisar validar timing real de auth, um curl de POST /auth/register
+      # aqui seria um gate mais fiel que o /health sozinho.
       - name: Subir a stack e aguardar /health
         run: |
           docker compose --profile prod up -d
@@ -162,7 +179,7 @@ jobs:
         run: docker compose --profile prod down -v
 
   publish:
-    name: Publish da imagem (GHCR)
+    name: Publish da imagem (GHCR, manifest multi-arch)
     needs: [build, smoke-test]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -170,14 +187,25 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Baixar imagem do job de build
+      - name: Baixar imagem amd64 do job de build
         uses: actions/download-artifact@v4
         with:
-          name: docker-images
-          path: /tmp/images
+          name: docker-images-amd64
+          path: /tmp/images/amd64
 
-      - name: Carregar imagem no Docker local
-        run: docker load -i /tmp/images/app-images.tar
+      - name: Baixar imagem arm64 do job de build
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images-arm64
+          path: /tmp/images/arm64
+
+      - name: Carregar as duas imagens no Docker local
+        run: |
+          docker load -i /tmp/images/amd64/app-images.tar
+          docker load -i /tmp/images/arm64/app-images.tar
+
+      - name: Configurar Buildx (necessário para montar o manifest multi-arch)
+        uses: docker/setup-buildx-action@v3
 
       - name: Login no GHCR
         uses: docker/login-action@v3
@@ -186,11 +214,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publicar imagem no GHCR (:sha e :latest)
+      # docker save/load não preserva manifest lists — por isso publicamos cada
+      # arquitetura numa tag intermediária (não usada fora deste job) e depois
+      # montamos o manifest multi-arch de verdade com `imagetools create`, que
+      # combina tags já publicadas no registry.
+      - name: Publicar as imagens por arquitetura (tags intermediárias)
         run: |
-          docker push "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}"
-          docker tag "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}" "${{ needs.build.outputs.image }}:latest"
-          docker push "${{ needs.build.outputs.image }}:latest"
+          for arch in amd64 arm64; do
+            docker push "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}-$arch"
+            docker push "${{ needs.build.outputs.image }}-migrate:${{ needs.build.outputs.sha_tag }}-$arch"
+          done
+
+      - name: Montar o manifest multi-arch (:sha e :latest) — imagem "api"
+        run: |
+          docker buildx imagetools create \
+            -t "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}" \
+            -t "${{ needs.build.outputs.image }}:latest" \
+            "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}-amd64" \
+            "${{ needs.build.outputs.image }}:${{ needs.build.outputs.sha_tag }}-arm64"
+
+      - name: Montar o manifest multi-arch (:sha e :latest) — imagem "migrate"
+        run: |
+          docker buildx imagetools create \
+            -t "${{ needs.build.outputs.image }}-migrate:${{ needs.build.outputs.sha_tag }}" \
+            -t "${{ needs.build.outputs.image }}-migrate:latest" \
+            "${{ needs.build.outputs.image }}-migrate:${{ needs.build.outputs.sha_tag }}-amd64" \
+            "${{ needs.build.outputs.image }}-migrate:${{ needs.build.outputs.sha_tag }}-arm64"
 
   dispatch:
     name: Disparar e2e no repo de deploy
