@@ -28,6 +28,11 @@ export type SecurityEventName =
   // Sinal de força bruta quando repetido a partir do mesmo IP.
   | 'login_failed'
   | 'rate_limit_exceeded'
+  // Não é um ataque: é a própria API avisando, no boot, que subiu com um teto de rate
+  // limit diferente do padrão (RATE_LIMIT_* — ver src/middlewares/rateLimit.ts). Existe
+  // para que um afrouxamento feito pro e2e e vazado pra produção seja alarmável, em vez
+  // de só descobrível lendo a task definition.
+  | 'rate_limit_override'
   // Reuso de um token de redefinição de senha já consumido — mesmo peso do
   // refresh_token_reuse: não é suspeita, é sinal de que o token vazou.
   | 'password_reset_token_reuse'

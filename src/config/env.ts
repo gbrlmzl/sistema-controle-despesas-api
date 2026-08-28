@@ -8,6 +8,14 @@ function optionalString<T extends z.ZodType<string>>(schema: T) {
   return z.preprocess((v) => (v === '' ? undefined : v), schema.optional());
 }
 
+// Mesma armadilha do optionalString, com um agravante: `z.coerce.number()` transforma
+// string vazia em 0, então sem o preprocess uma variável em branco viraria um teto de
+// zero requisições — o limitador barraria tudo. Não dá pra reusar o helper acima (ele
+// exige saída string; aqui a saída é number).
+function optionalPositiveInt() {
+  return z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional());
+}
+
 const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -34,11 +42,36 @@ const envSchema = z
     // (proteção CSRF do passport-oauth2) — não guarda sessão de usuário nenhuma.
     COOKIE_SESSION_SECRET: optionalString(z.string().min(32)),
 
-    // Desarma os rate limiters (SEC-01) para a suíte e2e do front, que precisa de ~19
-    // cadastros por execução contra um teto de 10/hora por IP — sem isso, a suíte testa
-    // o limitador em vez das telas. Só tem efeito em development: ver rateLimitDisabled
-    // no fim deste arquivo.
+    // Desarma os rate limiters (SEC-01) para a suíte e2e do front rodando localmente,
+    // que precisa de ~22 cadastros por execução contra um teto de 10/hora por IP — sem
+    // isso, a suíte testa o limitador em vez das telas. Só tem efeito em development:
+    // ver rateLimitDisabled no fim deste arquivo. O e2e orquestrado, que roda contra a
+    // imagem de produção, usa os tetos configuráveis logo abaixo em vez desta.
     RATE_LIMIT_DISABLED: z.preprocess((v) => (v === '' ? undefined : v), z.stringbool().default(false)),
+
+    // Tetos dos limitadores (SEC-01). Opcionais: sem elas vale o padrão declarado ao
+    // lado da razão de cada limitador, em src/middlewares/rateLimit.ts.
+    //
+    // Existem para o e2e orquestrado (repo sistema-controle-despesas-deploy), que sobe
+    // esta API com NODE_ENV=production de propósito — ali RATE_LIMIT_DISABLED é
+    // ignorada. Lá o navegador nunca fala com esta API direto: tudo passa pelo front,
+    // então a suíte inteira se divide em dois IPs só (o gateway da rede, repassado no
+    // X-Forwarded-For das chamadas do navegador, e o container do front nas chamadas
+    // server-side dele) — dois baldes para 17 specs, o que estoura o teto de cadastros
+    // antes da metade da suíte.
+    //
+    // A diferença para RATE_LIMIT_DISABLED é o que justifica estas valerem também em
+    // produção: afrouxar um número mantém o limitador MONTADO na rota — um refactor que
+    // desplugue o registerLimiter continua sendo pego por
+    // tests/integration/authRateLimit.test.ts, e um teto afrouxado por engano aparece no
+    // log de boot (evento rate_limit_override). Desarmar, não: o código do limitador
+    // nunca roda, e nada acusa.
+    RATE_LIMIT_GLOBAL: optionalPositiveInt(),
+    RATE_LIMIT_LOGIN: optionalPositiveInt(),
+    RATE_LIMIT_REGISTER: optionalPositiveInt(),
+    RATE_LIMIT_REFRESH: optionalPositiveInt(),
+    RATE_LIMIT_FORGOT_PASSWORD: optionalPositiveInt(),
+    RATE_LIMIT_RESET_PASSWORD: optionalPositiveInt(),
 
     // Recuperação de senha por email (ver docs/plano-recuperacao-de-senha.md).
     PASSWORD_RESET_TOKEN_EXPIRES_IN: z.string().default('30m'),

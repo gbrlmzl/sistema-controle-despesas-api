@@ -62,11 +62,36 @@ export function buildLimiter(name: string, options: Partial<Options>) {
   });
 }
 
+// Cada teto abaixo tem um padrão declarado junto da razão dele. O override por
+// variável de ambiente (ver RATE_LIMIT_* em src/config/env.ts) existe pro e2e
+// orquestrado, que roda esta API em NODE_ENV=production com a suíte inteira do Cypress
+// dividida em dois IPs só.
+//
+// Ignorado em `test` pela mesma razão que rateLimitDisabled é: lá quem manda é o
+// setRateLimitersArmedInTests() acima, e um valor no .env da máquina faria o
+// authRateLimit.test.ts exercitar um teto diferente do que o nome de cada caso afirma
+// (e, se alto, disparar milhares de requisições por caso).
+//
+// O desvio é anotado aqui dentro, e não montado numa lista à parte no fim do arquivo:
+// uma lista à parte repetiria os valores padrão, e o dia em que um deles mudasse só no
+// `const` a linha de log passaria a mentir.
+const tetosSobrescritos = new Map<string, { aplicado: number; padrao: number }>();
+
+export function resolveLimit(nome: string, padrao: number, override: number | undefined): number {
+  if (override === undefined || env.NODE_ENV === 'test' || override === padrao) {
+    return padrao;
+  }
+
+  tetosSobrescritos.set(nome, { aplicado: override, padrao });
+
+  return override;
+}
+
 // Teto geral por IP. Serve de rede de proteção para a instância como um todo: mesmo
 // uma rota barata, chamada rápido o bastante, ocupa o event loop. O valor é folgado
 // para o uso real do front (uma tela de dashboard dispara várias chamadas de uma vez)
 // e apertado o bastante para um script não conseguir saturar a máquina.
-export const GLOBAL_LIMIT = 120;
+export const GLOBAL_LIMIT = resolveLimit('global', 120, env.RATE_LIMIT_GLOBAL);
 
 export const globalLimiter = buildLimiter('global', {
   windowMs: 60 * 1000,
@@ -77,7 +102,7 @@ export const globalLimiter = buildLimiter('global', {
 // Login: o alvo clássico de força bruta e o mais caro em CPU da API.
 // `skipSuccessfulRequests` faz o limite contar só o que falhou — quem acerta a senha
 // nunca gasta cota, então usuário legítimo não é penalizado por logar várias vezes.
-export const LOGIN_LIMIT = 8;
+export const LOGIN_LIMIT = resolveLimit('login', 8, env.RATE_LIMIT_LOGIN);
 
 export const loginLimiter = buildLimiter('login', {
   windowMs: 15 * 60 * 1000,
@@ -90,7 +115,7 @@ export const loginLimiter = buildLimiter('login', {
 // O risco não é adivinhar senha, é criar conta em massa — cada cadastro gasta
 // bcrypt.hash e ocupa uma linha no banco. Limitar só o que falha deixaria a fazenda
 // de contas passar livre.
-export const REGISTER_LIMIT = 10;
+export const REGISTER_LIMIT = resolveLimit('register', 10, env.RATE_LIMIT_REGISTER);
 
 export const registerLimiter = buildLimiter('register', {
   windowMs: 60 * 60 * 1000,
@@ -102,7 +127,7 @@ export const registerLimiter = buildLimiter('register', {
 // usuário pode ter várias abas abertas — daí o limite bem mais generoso que o do
 // login. Ainda assim limitado, porque cada chamada válida insere uma linha nova em
 // RefreshToken (ver SEC-09).
-export const REFRESH_LIMIT = 30;
+export const REFRESH_LIMIT = resolveLimit('refresh', 30, env.RATE_LIMIT_REFRESH);
 
 export const refreshLimiter = buildLimiter('refresh', {
   windowMs: 15 * 60 * 1000,
@@ -117,7 +142,7 @@ export const refreshLimiter = buildLimiter('refresh', {
 // (D-03, anti-enumeração): toda requisição é "bem-sucedida" do ponto de vista do
 // rate-limiter, então essa opção desarmaria o limitador por completo, em silêncio —
 // não "padronize" com o loginLimiter.
-export const FORGOT_PASSWORD_LIMIT = 5;
+export const FORGOT_PASSWORD_LIMIT = resolveLimit('forgot-password', 5, env.RATE_LIMIT_FORGOT_PASSWORD);
 
 export const forgotPasswordLimiter = buildLimiter('forgot-password', {
   windowMs: 60 * 60 * 1000,
@@ -127,10 +152,23 @@ export const forgotPasswordLimiter = buildLimiter('forgot-password', {
 
 // Fecha a porta pra tentativa de adivinhar token (32 bytes, mas defesa em
 // profundidade) e limita o gasto de bcrypt.hash por IP.
-export const RESET_PASSWORD_LIMIT = 10;
+export const RESET_PASSWORD_LIMIT = resolveLimit('reset-password', 10, env.RATE_LIMIT_RESET_PASSWORD);
 
 export const resetPasswordLimiter = buildLimiter('reset-password', {
   windowMs: 60 * 60 * 1000,
   limit: RESET_PASSWORD_LIMIT,
   message: { message: 'Muitas tentativas de redefinição de senha. Tente novamente mais tarde.' },
 });
+
+// SEC-10 -> Um teto afrouxado não pode ser invisível. Sem isto, a única forma de
+// descobrir que uma instância está aceitando 500 cadastros por hora em vez de 10 é ler
+// a task definition — e é justamente no log que os 429 que deixaram de acontecer
+// apareceriam. Uma linha no boot põe o desvio no mesmo lugar, com o mesmo formato
+// mensurável do resto do SEC-10 (dá pra alarmar em `{ $.event = "rate_limit_override" }`
+// e descobrir um afrouxamento que vazou pra produção).
+//
+// Silencioso quando nada foi sobrescrito, e em `test` (o logSecurityEvent já cuida
+// disso) — só fala quando há o que dizer.
+if (tetosSobrescritos.size > 0) {
+  logSecurityEvent('rate_limit_override', { limiters: Object.fromEntries(tetosSobrescritos) });
+}

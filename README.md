@@ -412,7 +412,8 @@ documento.
 | Controle | Implementação |
 | --- | --- |
 | Rate limiting | Teto global de 120 req/min por IP; login 8/15min (só falhas contam), registro 10/h (sucesso conta), refresh 30/15min |
-| Desarmar limitador | `RATE_LIMIT_DISABLED=true` existe para a suíte e2e do front e **só tem efeito em `development`** — em produção e em `test` é ignorada, para que a variável copiada por engano num servidor não desligue a proteção |
+| Desarmar limitador | `RATE_LIMIT_DISABLED=true` existe para a suíte e2e do front rodando localmente e **só tem efeito em `development`** — em produção e em `test` é ignorada, para que a variável copiada por engano num servidor não desligue a proteção |
+| Afrouxar limitador | `RATE_LIMIT_GLOBAL`, `RATE_LIMIT_LOGIN`, `RATE_LIMIT_REGISTER`, `RATE_LIMIT_REFRESH`, `RATE_LIMIT_FORGOT_PASSWORD`, `RATE_LIMIT_RESET_PASSWORD` trocam o **número**, nunca desligam o middleware — valem em produção (é como o e2e orquestrado roda contra a imagem real) e qualquer desvio do padrão sai no log de boot como `rate_limit_override` |
 | `trust proxy` | Fixado em `1` — confiar na cadeia inteira deixaria qualquer cliente forjar `X-Forwarded-For` e escapar do limite |
 | Cabeçalhos | `helmet` com HSTS de 180 dias; CSP desligado (a API só devolve JSON) |
 | CORS | Origem única (`FRONTEND_URL`) com `credentials: true` |
@@ -515,7 +516,13 @@ configuração inválida.
 | `GOOGLE_CLIENT_SECRET` | condicional | — | juntas — ou nenhuma delas, e aí o |
 | `GOOGLE_CALLBACK_URL` | condicional | — | login com Google fica desabilitado |
 | `COOKIE_SESSION_SECRET` | condicional | — | Assina o cookie de `state` do OAuth (mín. 32 caracteres) |
-| `RATE_LIMIT_DISABLED` | não | `false` | Desarma os limitadores para a suíte e2e do front — **ignorada** fora de `development` |
+| `RATE_LIMIT_DISABLED` | não | `false` | Desarma os limitadores para a suíte e2e local do front — **ignorada** fora de `development` |
+| `RATE_LIMIT_GLOBAL` | não | `120`/min | Teto de cada limitador, por IP. Valem em produção (o e2e |
+| `RATE_LIMIT_LOGIN` | não | `8`/15min | orquestrado afrouxa os números sem desarmar nada) e são |
+| `RATE_LIMIT_REGISTER` | não | `10`/h | **ignoradas** em `test`, onde o teto exercitado tem que ser |
+| `RATE_LIMIT_REFRESH` | não | `30`/15min | o do código. Em branco = o padrão ao lado. Qualquer |
+| `RATE_LIMIT_FORGOT_PASSWORD` | não | `5`/h | desvio é registrado no boot como `rate_limit_override` |
+| `RATE_LIMIT_RESET_PASSWORD` | não | `10`/h | (SEC-10) |
 | `PASSWORD_RESET_TOKEN_EXPIRES_IN` | não | `30m` | Validade do link de redefinição de senha |
 | `PASSWORD_RESET_PATH` | não | `/change-password` | Caminho da tela de redefinição no front (compõe o link com `FRONTEND_URL`) |
 | `SMTP_HOST` | condicional | — | As cinco variáveis SMTP são exigidas |
