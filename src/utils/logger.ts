@@ -22,9 +22,14 @@ export function logError(err: unknown, context?: string): void {
 // token. Só identificadores (username, userId, prefixo do hash) e o IP de origem.
 
 export type SecurityEventName =
-  // Roubo de refresh token CONFIRMADO — um token já revogado sendo reapresentado.
-  // É o alerta mais valioso que esta aplicação emite.
+  // Roubo de refresh token CONFIRMADO — um token revogado há mais tempo que a janela de
+  // graça da rotação sendo reapresentado. É o alerta mais valioso que esta aplicação emite.
   | 'refresh_token_reuse'
+  // NÃO é ataque: um cliente reapresentou um token dentro da janela de graça, o que
+  // acontece quando requisições paralelas carregam o mesmo cookie (abas, prefetch).
+  // Existe separado do refresh_token_reuse justamente pra não acionar alerta — mas fica
+  // medível, porque um volume anormal denuncia um front multiplicando renovações.
+  | 'refresh_token_grace_reuse'
   // Sinal de força bruta quando repetido a partir do mesmo IP.
   | 'login_failed'
   | 'rate_limit_exceeded'
