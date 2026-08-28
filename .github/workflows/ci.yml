@@ -123,6 +123,25 @@ jobs:
           path: /tmp/images/app-images.tar
           retention-days: 1
 
+  # Portão de nome fixo para a branch protection do main. Como `build` é uma
+  # matrix, o nome dos checks dele carrega a plataforma e muda toda vez que a
+  # matrix muda — um required status check apontando pra lá fica preso em
+  # "Expected / waiting for status to be reported" e trava o merge. Este job
+  # não builda nada: só republica o resultado da matrix sob um nome estável.
+  #
+  # `if: always()` é obrigatório aqui: sem ele, um `build` que falha deixa este
+  # job como skipped, e o GitHub trata required check skipped como aprovado.
+  build-gate:
+    name: Build da imagem (docker compose --profile prod)
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar resultado do build (todas as plataformas)
+        run: |
+          echo "build: ${{ needs.build.result }}"
+          [ "${{ needs.build.result }}" = "success" ] || exit 1
+
   smoke-test:
     name: Smoke test (sobe a stack e valida /health)
     needs: build
