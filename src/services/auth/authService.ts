@@ -286,10 +286,46 @@ export interface RotatedSession {
   refreshToken: IssuedRefreshToken;
 }
 
+// Janela de graça da rotação: por quanto tempo, depois de rotacionado, um token ainda é
+// aceito de novo em vez de ser tratado como roubo.
+//
+// Sem ela, "reuso" e "concorrência" viram a mesma coisa. Um cliente normal dispara
+// requisições em paralelo o tempo todo (várias abas, prefetch do Next, um fetch que toma
+// 401 no mesmo instante de uma navegação), e todas carregam o MESMO refresh token porque
+// nenhuma viu ainda o Set-Cookie das outras. A primeira rotaciona; a segunda chega
+// milissegundos depois com um token que acabou de ser revogado e derrubava a família
+// inteira — deslogando o usuário de todos os dispositivos e emitindo um alerta de roubo
+// falso. Nenhum controle no cliente resolve isso sozinho: o front é stateless e pode
+// rodar em mais de uma instância.
+//
+// O preço é explícito e limitado: quem roubar um token tem estes 10 segundos, contados a
+// partir da rotação legítima, pra usá-lo. Passada a janela, a detecção continua exatamente
+// como era. É o mesmo compromisso que o OAuth 2.0 Security BCP descreve pra rotação com
+// clientes concorrentes.
+const ROTATION_GRACE_MS = 10_000;
+
+// A graça vale só pra quem foi revogado POR ROTAÇÃO. Tempo sozinho não basta como
+// critério: logout, troca de senha (revokeAllUserTokens) e a própria detecção de reuso
+// também gravam revokedAt = agora, e uma janela puramente temporal ressuscitaria por 10s
+// exatamente as sessões que esses três fluxos existem pra matar.
+//
+// O que distingue os casos, sem coluna nova no banco: rotação legítima deixa um sucessor
+// VIVO na mesma família — é o token que o cliente acabou de receber. Revogação em massa
+// não deixa nenhum. Logo, "existe irmão vivo nesta família" é o mesmo que "este token foi
+// aposentado por uma rotação normal, e quem o reapresenta é um cliente atrasado".
+async function temSucessorVivo(familyId: string): Promise<boolean> {
+  const sucessor = await prisma.refreshToken.findFirst({
+    where: { familyId, revokedAt: null, expiresAt: { gt: new Date() } },
+    select: { id: true },
+  });
+
+  return sucessor !== null;
+}
+
 // Troca um refresh token válido por um novo (mesma família) + devolve o usuário,
-// pra emitir um access token novo. Detecta reuso: um token já revogado sendo
-// apresentado de novo é sinal de token roubado — revoga a família inteira, forçando
-// login de novo em todos os dispositivos daquela sessão.
+// pra emitir um access token novo. Detecta reuso: um token revogado há mais tempo que a
+// janela de graça sendo apresentado de novo é sinal de token roubado — revoga a família
+// inteira, forçando login de novo em todos os dispositivos daquela sessão.
 export async function rotateRefreshToken(rawToken: string, context: SecurityContext = {}): Promise<RotatedSession> {
   const tokenHash = hashRefreshToken(rawToken);
   const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
@@ -298,10 +334,15 @@ export async function rotateRefreshToken(rawToken: string, context: SecurityCont
     throw new AppError(401, 'Sessão inválida. Faça login novamente.');
   }
 
-  if (existing.revokedAt) {
+  const dentroDaJanelaDeGraca =
+    existing.revokedAt !== null &&
+    Date.now() - existing.revokedAt.getTime() <= ROTATION_GRACE_MS &&
+    (await temSucessorVivo(existing.familyId));
+
+  if (existing.revokedAt && !dentroDaJanelaDeGraca) {
     // SEC-10 -> Este é o evento mais importante da aplicação inteira: um token já
-    // rotacionado sendo reapresentado só acontece se alguém ficou com uma cópia. Não é
-    // suspeita, é roubo confirmado — e até aqui acontecia em silêncio absoluto.
+    // rotacionado sendo reapresentado fora da janela de graça só acontece se alguém ficou
+    // com uma cópia. Não é suspeita, é roubo confirmado.
     //
     // O identificador logado é o prefixo do hash, nunca o token: quem lê o log precisa
     // conseguir correlacionar a linha do banco, não reusar a credencial.
@@ -316,11 +357,30 @@ export async function rotateRefreshToken(rawToken: string, context: SecurityCont
     throw new AppError(401, 'Sessão inválida. Faça login novamente.');
   }
 
+  if (dentroDaJanelaDeGraca) {
+    // Evento próprio, e não refresh_token_reuse: isto é esperado e não deve acionar quem
+    // responde a alerta de segurança. Mas continua valendo a pena medir — um volume que
+    // suba muito significa que o front voltou a multiplicar chamadas de renovação (foi o
+    // que aconteceu quando o apiClient.ts do Next renovava durante o render, sem
+    // conseguir persistir o cookie).
+    logSecurityEvent('refresh_token_grace_reuse', {
+      ip: context.ip,
+      userId: existing.userId,
+      familyId: existing.familyId,
+      tokenHashPrefix: tokenHash.slice(0, 12),
+    });
+  }
+
   if (existing.expiresAt < new Date()) {
     throw new AppError(401, 'Sessão expirada. Faça login novamente.');
   }
 
-  await prisma.refreshToken.update({ where: { id: existing.id }, data: { revokedAt: new Date() } });
+  // Só revoga o que ainda não estava revogado. Reescrever revokedAt num token já
+  // rotacionado empurraria o fim da janela de graça pra frente a cada reapresentação —
+  // um token roubado ficaria válido indefinidamente enquanto fosse usado a cada 10s.
+  if (!existing.revokedAt) {
+    await prisma.refreshToken.update({ where: { id: existing.id }, data: { revokedAt: new Date() } });
+  }
 
   const user = await getUserById(existing.userId);
   if (!user) {

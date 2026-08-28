@@ -33,6 +33,25 @@ function cookieValue(setCookieHeader: string): string {
   return setCookieHeader.split(';')[0]!.split('=')[1]!;
 }
 
+function tokenHashDe(rawToken: string): string {
+  return createHash('sha256').update(rawToken).digest('hex');
+}
+
+async function revokedAtDe(rawToken: string): Promise<Date | null> {
+  const row = await prisma.refreshToken.findUnique({ where: { tokenHash: tokenHashDe(rawToken) } });
+  return row!.revokedAt;
+}
+
+// Empurra a revogação pra fora da janela de graça da rotação (ROTATION_GRACE_MS, 10s).
+// É o que transforma "requisição concorrente" em "token roubado" aos olhos da API — sem
+// isto, um teste de reuso feito na velocidade do Jest mediria só a concorrência.
+async function envelhecerRevogacao(rawToken: string): Promise<void> {
+  await prisma.refreshToken.update({
+    where: { tokenHash: tokenHashDe(rawToken) },
+    data: { revokedAt: new Date(Date.now() - 60_000) },
+  });
+}
+
 afterAll(async () => {
   await prisma.user.deleteMany({ where: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } });
   await prisma.$disconnect();
@@ -126,7 +145,29 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
     expect(secondRefreshToken).not.toBe(firstRefreshToken);
   });
 
-  it('rejeita o token antigo já rotacionado (reuso) com 401', async () => {
+  // A janela de graça (authService#ROTATION_GRACE_MS) é o que separa "duas requisições
+  // paralelas do mesmo usuário" de "alguém com uma cópia do token". Um teste que reusa o
+  // token imediatamente mede a primeira coisa, não a segunda — por isso os casos de roubo
+  // abaixo envelhecem a revogação antes de reapresentar.
+  it('aceita o token recém-rotacionado dentro da janela de graça, sem derrubar a família', async () => {
+    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${firstRefreshToken}`]);
+
+    expect(response.status).toBe(200);
+    const cookie = getSetCookie(response, REFRESH_COOKIE_NAME);
+    expect(cookie).toBeDefined();
+    expect(cookieValue(cookie!)).not.toBe(firstRefreshToken);
+  });
+
+  it('a sessão sobrevive à concorrência — o token da rotação legítima continua valendo', async () => {
+    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${secondRefreshToken}`]);
+
+    expect(response.status).toBe(200);
+    secondRefreshToken = cookieValue(getSetCookie(response, REFRESH_COOKIE_NAME)!);
+  });
+
+  it('rejeita com 401 o token rotacionado há mais tempo que a janela de graça (reuso)', async () => {
+    await envelhecerRevogacao(firstRefreshToken);
+
     const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${firstRefreshToken}`]);
 
     expect(response.status).toBe(401);
@@ -136,6 +177,21 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
     const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${secondRefreshToken}`]);
 
     expect(response.status).toBe(401);
+  });
+
+  it('reapresentar o token dentro da graça não estica a janela (revokedAt não é reescrito)', async () => {
+    const registerResponse = await request(app).post('/auth/register').send(validRegisterBody());
+    const rawToken = cookieValue(getSetCookie(registerResponse, REFRESH_COOKIE_NAME)!);
+
+    await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
+    const revogadoEm = await revokedAtDe(rawToken);
+    expect(revogadoEm).not.toBeNull();
+
+    // Se cada reapresentação reescrevesse revokedAt, o relógio da janela reiniciaria a
+    // cada tentativa e um token roubado valeria pra sempre enquanto fosse usado a cada 10s.
+    await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
+
+    expect(await revokedAtDe(rawToken)).toEqual(revogadoEm);
   });
 
   it('rejeita requisição sem cookie de refresh', async () => {

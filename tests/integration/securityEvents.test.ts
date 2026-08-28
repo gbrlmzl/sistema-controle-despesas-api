@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { createHash } from 'node:crypto';
 import request from 'supertest';
 import app from '../../src/app.js';
 import { env } from '../../src/config/env.js';
@@ -175,17 +176,28 @@ describe('login falho é registrado (SEC-10)', () => {
   });
 });
 
+// Empurra a revogação pra fora da janela de graça da rotação (authService#
+// ROTATION_GRACE_MS, 10s). Dentro dela, reapresentar um token é concorrência de cliente,
+// não roubo — e o alerta que interessa aqui só existe do lado de fora.
+async function envelhecerRevogacao(rawToken: string): Promise<void> {
+  await prisma.refreshToken.update({
+    where: { tokenHash: createHash('sha256').update(rawToken).digest('hex') },
+    data: { revokedAt: new Date(Date.now() - 60_000) },
+  });
+}
+
 describe('reuso de refresh token é registrado (SEC-10)', () => {
-  it('registra o evento quando um token já revogado é reapresentado', async () => {
+  it('registra o evento quando um token revogado fora da janela de graça é reapresentado', async () => {
     const user = await registerUser();
     const ip = '203.0.113.44';
 
-    // Rotaciona uma vez: o token original passa a estar revogado. Reapresentá-lo é,
-    // por definição, alguém usando uma cópia — é roubo confirmado, não suspeita.
+    // Rotaciona uma vez: o token original passa a estar revogado. Reapresentá-lo depois da
+    // janela de graça é, por definição, alguém usando uma cópia — roubo, não suspeita.
     const rotacao = await request(app)
       .post('/auth/refresh')
       .set('Cookie', [`${REFRESH_COOKIE_NAME}=${user.refreshToken}`]);
     expect(rotacao.status).toBe(200);
+    await envelhecerRevogacao(user.refreshToken);
 
     const eventos = await eventosDe(async () => {
       const reuso = await request(app)
@@ -211,6 +223,7 @@ describe('reuso de refresh token é registrado (SEC-10)', () => {
       .post('/auth/refresh')
       .set('Cookie', [`${REFRESH_COOKIE_NAME}=${user.refreshToken}`]);
     expect(rotacao.status).toBe(200);
+    await envelhecerRevogacao(user.refreshToken);
 
     const eventos = await eventosDe(async () => {
       await request(app)
@@ -239,6 +252,36 @@ describe('reuso de refresh token é registrado (SEC-10)', () => {
     });
 
     expect(doTipo(eventos, 'refresh_token_reuse')).toHaveLength(0);
+  });
+
+  // O alarme só vale enquanto significar uma coisa só. Requisições paralelas do mesmo
+  // usuário (abas, prefetch do Next) reapresentam o mesmo token o tempo todo; se isso
+  // aparecesse como refresh_token_reuse, o evento mais valioso da aplicação viraria ruído
+  // e seria desligado — junto com a detecção de roubo de verdade.
+  it('reuso dentro da janela de graça não vira alerta de roubo', async () => {
+    const user = await registerUser();
+
+    const rotacao = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${user.refreshToken}`]);
+    expect(rotacao.status).toBe(200);
+
+    const eventos = await eventosDe(async () => {
+      const concorrente = await request(app)
+        .post('/auth/refresh')
+        .set('X-Forwarded-For', '203.0.113.48')
+        .set('Cookie', [`${REFRESH_COOKIE_NAME}=${user.refreshToken}`]);
+
+      expect(concorrente.status).toBe(200);
+    });
+
+    expect(doTipo(eventos, 'refresh_token_reuse')).toHaveLength(0);
+
+    // Mas não é invisível: um volume anormal denuncia um cliente multiplicando renovações.
+    const [evento] = doTipo(eventos, 'refresh_token_grace_reuse');
+    expect(evento).toBeDefined();
+    expect(evento!.userId).toBe(user.id);
+    expect(JSON.stringify(evento)).not.toContain(user.refreshToken);
   });
 });
 
