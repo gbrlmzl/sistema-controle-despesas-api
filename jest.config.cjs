@@ -16,6 +16,10 @@ module.exports = {
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
+  // setupFiles, não setupFilesAfterEnv: precisa rodar ANTES do primeiro import de
+  // src/config/env.ts, porque storageEnabled é uma const resolvida no carregamento do
+  // módulo. Ver o arquivo para o porquê de a suíte não poder herdar o .env local.
+  setupFiles: ['<rootDir>/tests/setupEnv.ts'],
   testMatch: ['<rootDir>/tests/**/*.test.ts'],
   collectCoverageFrom: ['src/**/*.ts', '!src/generated/**', '!src/types/**'],
   coverageDirectory: '<rootDir>/coverage',
