@@ -5,7 +5,13 @@ import type { AuthUser } from '../auth/authService.js';
 
 const SALT_ROUNDS = 10;
 
-function toAuthUser(user: { id: number; name: string; username: string | null; email: string; profilePic: string | null }): AuthUser {
+function toAuthUser(user: {
+  id: number;
+  name: string;
+  username: string | null;
+  email: string;
+  profilePic: string | null;
+}): AuthUser {
   return {
     id: user.id,
     name: user.name,

@@ -9,6 +9,14 @@ Este repositório é a **fonte de verdade do banco de dados** e concentra toda a
 negócio. O front-end (Next.js, em repositório separado) consome esta API e não toca o
 Postgres diretamente.
 
+Em produção o sistema roda em **`https://cronos.gabrielmizael.com`** — ECS sobre uma única
+instância EC2 Graviton, atrás da Cloudflare. Ver [Arquitetura na AWS](#arquitetura-na-aws).
+
+| | |
+| --- | --- |
+| Front-end | [`sistema-controle-despesas-front`](https://github.com/gbrlmzl/sistema-controle-despesas-front) |
+| Orquestração do e2e e infra | [`sistema-controle-despesas-deploy`](https://github.com/gbrlmzl/sistema-controle-despesas-deploy) |
+
 ---
 
 ## Sumário
@@ -25,6 +33,7 @@ Postgres diretamente.
 - [Variáveis de ambiente](#variáveis-de-ambiente)
 - [Testes](#testes)
 - [CI/CD](#cicd)
+- [Arquitetura na AWS](#arquitetura-na-aws)
 - [Scripts npm](#scripts-npm)
 - [Documentação do projeto](#documentação-do-projeto)
 
@@ -45,6 +54,7 @@ Postgres diretamente.
 | Email | `nodemailer` sobre SMTP | Recuperação de senha; opcional — sem as variáveis SMTP o envio só vai para o log |
 | Armazenamento | AWS SDK v3 (`client-s3`, `s3-presigned-post`, `s3-request-presigner`) | Comprovantes em bucket S3 privado, com upload e leitura pré-assinados |
 | Testes | Jest 30 (ESM via `babel-jest`) + Supertest | Unitário + integração |
+| Lint e formatação | Biome 2 | Uma ferramenta só no lugar de ESLint + Prettier; configuração em `biome.json` |
 | Empacotamento | Docker multi-stage + Docker Compose (perfis `dev`/`prod`) | Imagem final sem dev deps, rodando como usuário `node` |
 
 ---
@@ -116,10 +126,11 @@ src/
 ├── lib/                   # session.ts, username.ts, mailer.ts, emailTemplates.ts, storage.ts
 ├── utils/                 # AppError, logger, period, readiness, shutdown, tokenPurge, receiptPurge
 ├── scripts/               # purgeTokens.ts (job avulso) + testMail.ts / testStorage.ts (checagem manual)
-└── generated/             # Prisma Client gerado — não editar, fora do coverage
+├── types/                 # express.d.ts — tipa req.user
+└── generated/             # Prisma Client gerado — não editar, fora do coverage e do lint
 prisma/                    # schema.prisma + migrations
-tests/                     # unit/ e integration/
-docs/                      # plano de arquitetura e revisão de segurança
+tests/                     # unit/, integration/, helpers/ (fakes) e setupEnv.ts
+docs/                      # planos, arquitetura de auth e revisão de segurança
 ```
 
 Um padrão recorrente: **comportamento operacional mora em `utils/` com dependências
@@ -192,8 +203,20 @@ Desenho alinhado à RFC 9700 (OAuth 2.0 Security BCP) e ao OAuth 2.1:
 - **Nunca em texto puro no banco** — só o hash SHA-256 é armazenado (o valor já tem alta
   entropia, então não precisa do custo de bcrypt).
 - **Rotação de uso único** — cada `POST /auth/refresh` consome o token atual e emite outro.
-- **Detecção de reuso** — se um token já revogado for reapresentado, é sinal de roubo: a
-  **família inteira** daquela sessão é revogada e o evento `refresh_token_reuse` vai para o log.
+- **Janela de graça de 10 s na rotação** — um token recém-rotacionado ainda é aceito por 10
+  segundos, **desde que exista um sucessor vivo na mesma família**. Sem isso, "reuso" e
+  "concorrência" seriam a mesma coisa: várias abas, um prefetch e um `fetch` que toma 401 no mesmo
+  instante carregam todos o **mesmo** cookie, porque nenhum viu ainda o `Set-Cookie` do outro — e a
+  segunda chamada derrubava a sessão em todos os dispositivos com um alerta de roubo falso. O
+  critério "tem irmão vivo na família" é o que separa os casos sem coluna nova no banco: rotação
+  legítima deixa um sucessor; logout, troca de senha e a própria detecção de reuso não deixam
+  nenhum — então **nenhum dos três é ressuscitado** pela janela. O `revokedAt` também nunca é
+  reescrito, para que reapresentar o token a cada 10 s não empurre a janela para a frente
+  indefinidamente.
+- **Detecção de reuso** — um token revogado **há mais tempo que a janela de graça** sendo
+  reapresentado é sinal de roubo: a **família inteira** daquela sessão é revogada e o evento
+  `refresh_token_reuse` vai para o log. Dentro da janela, o evento emitido é outro
+  (`refresh_token_grace_reuse`), justamente para não acionar quem responde a alerta de segurança.
 - **Logout revoga de verdade** — marca o token como revogado, não apenas limpa o cookie.
 - **Troca de senha derruba todas as sessões** — revoga tudo e reabre a sessão apenas no
   dispositivo atual (nessa ordem, para o próprio usuário não cair junto).
@@ -221,6 +244,10 @@ email é opcional: sem o grupo de 5 variáveis `SMTP_*`, a API sobe normalmente 
 apenas fica registrado em log (com o link, em `development`) — é o que mantém o CI verde sem
 segredo nenhum. Detalhes completos em
 [`docs/plano-recuperacao-de-senha.md`](docs/plano-recuperacao-de-senha.md).
+
+O percurso completo — do cookie no navegador, passando pelo proxy do front, até o
+`loadUserResidenceContext` que decide a autorização em cada service — está descrito em
+[`docs/arquitetura-autenticacao-e-autorizacao.md`](docs/arquitetura-autenticacao-e-autorizacao.md).
 
 ```mermaid
 sequenceDiagram
@@ -433,10 +460,15 @@ documento.
   CloudWatch) e `dev` localmente; silenciado nos testes.
 - **Eventos de segurança** — `logSecurityEvent` emite **JSON de uma linha** no stderr, com
   chaves estáveis, justamente para virar *metric filter* + alarme no CloudWatch. Eventos:
-  `refresh_token_reuse`, `login_failed`, `rate_limit_exceeded`, `password_reset_token_reuse`,
-  `password_reset_throttled` e `receipt_content_mismatch` (o arquivo que chegou no bucket não
-  bate com o `Content-Type` declarado na intenção de upload). Nada de segredo é registrado — só
-  identificadores e o IP de origem.
+  `refresh_token_reuse`, `refresh_token_grace_reuse`, `login_failed`, `rate_limit_exceeded`,
+  `rate_limit_override` (no boot, quando algum teto foi alterado por variável de ambiente),
+  `password_reset_token_reuse`, `password_reset_throttled` e `receipt_content_mismatch` (o arquivo
+  que chegou no bucket não bate com o `Content-Type` declarado na intenção de upload). Nada de
+  segredo é registrado — só identificadores e o IP de origem.
+  Os dois primeiros pedem tratamento oposto no CloudWatch: `refresh_token_reuse` é **alarme**;
+  `refresh_token_grace_reuse` é **métrica** — esperado em volume baixo, e um pico denuncia um
+  cliente multiplicando renovações (foi exatamente o sintoma de quando o `apiClient.ts` do Next
+  renovava durante o render, sem conseguir persistir o cookie).
 - **Liveness vs. readiness** — `/health` responde "o processo está vivo?" (reiniciar resolve) e
   não toca o banco; `/ready` responde "dá para atender agora?" e retorna `503` quando o
   Postgres não responde (tirar do balanceamento, não reiniciar).
@@ -551,7 +583,7 @@ npm test
 npm run test:coverage
 ```
 
-33 arquivos de teste, divididos entre `tests/unit/` (schemas Zod, regras dos services,
+34 arquivos de teste, divididos entre `tests/unit/` (schemas Zod, regras dos services,
 utilitários operacionais) e `tests/integration/` (Supertest contra o app real, com banco).
 A integração cobre os fluxos de auth, residências, despesas, notificações, usuários e acertos
 de pagamento, além de casos especificamente de segurança: rate limiting, troca de senha,
@@ -561,6 +593,15 @@ O armazenamento de comprovantes (`src/lib/storage.ts`) é uma porta injetável, 
 do envio de email: **nenhum teste automatizado abre conexão com a AWS**. Os testes trocam a
 implementação ativa por um fake em memória (`tests/helpers/fakeStorage.ts`) via
 `setStorageForTests`.
+
+E a suíte **não herda o `.env` de quem a roda**: `tests/setupEnv.ts` (registrado em `setupFiles`,
+o único momento anterior ao import de qualquer módulo do projeto) zera `S3_REGION` e `S3_BUCKET`
+antes de `src/config/env.ts` calcular `storageEnabled`. Sem isso, uma máquina de desenvolvimento
+com S3 configurado fazia `setStorageForTests(null)` restaurar o adapter S3 **de verdade**, e o
+teste de degradação graciosa recebia `201` onde exige `503` — falhando por causa do ambiente, não
+do código (no CI passava, porque lá não existe `.env` nenhum). O valor gravado é **string vazia**,
+não `delete`: o `dotenv` repõe qualquer chave ausente, e só o `optionalString()` do schema
+converte `''` em `undefined`.
 
 Detalhe deliberado: **os limitadores ficam desarmados em `NODE_ENV=test`**, porque a suíte
 dispara dezenas de requisições nas mesmas rotas de propósito — do contrário ela testaria o
@@ -575,22 +616,243 @@ client novo do Prisma.
 
 ## CI/CD
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml), em cinco jobs encadeados:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), em sete jobs — o `lint` roda em
+paralelo, e os demais em cadeia:
 
 ```mermaid
 flowchart LR
-    T[test] --> B[build] --> S[smoke-test] --> P[publish] --> D[dispatch]
+    L[lint]
+    T[test] --> B["build (matrix: amd64 + arm64)"]
+    B --> G[build-gate]
+    B --> S[smoke-test] --> P[publish] --> D[dispatch]
 ```
 
-1. **test** — sobe um Postgres de serviço, aplica migrations, builda e roda a suíte completa
+1. **lint** — `npm run lint:ci` (`biome ci` com o reporter do GitHub, que anota os problemas
+   direto nas linhas do PR). É independente dos outros jobs: não bloqueia o build, mas aparece
+   como check próprio.
+2. **test** — sobe um Postgres de serviço, aplica migrations, builda e roda a suíte completa
    (com `JWT_SECRET` efêmero gerado no próprio job).
-2. **build** — `docker compose --profile prod build`, salvando as imagens `api` e `migrate`
-   como artifact para os jobs seguintes.
-3. **smoke-test** — sobe a stack inteira com as imagens recém-construídas e espera `/health`
+3. **build** — `docker compose --profile prod build` numa **matrix de duas plataformas**,
+   salvando as imagens `api` e `api-migrate` de cada arquitetura como artifact.
+4. **build-gate** — não builda nada: republica o resultado da matrix sob um **nome fixo**, porque
+   o nome dos checks de uma matrix carrega a plataforma e muda toda vez que a matrix muda — um
+   required status check apontando para lá trava o merge em "waiting for status". Roda com
+   `if: always()`, já que um required check *skipped* conta como aprovado no GitHub.
+5. **smoke-test** — sobe a stack inteira com as imagens recém-construídas e espera `/health`
    responder.
-4. **publish** *(só em `main`)* — publica no GHCR com as tags `:sha` e `:latest`.
-5. **dispatch** *(só em `main`)* — avisa o repositório de deploy para rodar o e2e contra
+6. **publish** *(só em `main`)* — publica cada arquitetura numa tag intermediária e monta o
+   **manifest multi-arch** com `docker buildx imagetools create`, nas tags `:sha` e `:latest`
+   (`docker save`/`load` não preserva manifest list, daí o rodeio).
+7. **dispatch** *(só em `main`)* — avisa o repositório de deploy para rodar o e2e contra
    aquela tag exata; passando, a imagem é repromovida a `:stable`.
+
+**Por que multi-arch, se o deploy é só ARM.** O alvo de produção é Graviton (`linux/arm64`), e
+por um tempo a imagem foi arm64 puro. O problema apareceu do outro lado: o e2e orquestrado roda
+num runner `ubuntu-latest` **amd64**, e com só a variante ARM disponível ele subia a API inteira
+emulada por QEMU — onde o bcrypt do `POST /auth/register` estoura o timeout padrão do Cypress e a
+suíte falha de forma intermitente. O leg amd64 é nativo no runner; só o arm64 precisa de QEMU.
+
+O CI publica **duas** imagens. A segunda, `…-api-migrate`, é o estágio `build` do Dockerfile
+(toolchain completo) e existe para rodar `prisma migrate deploy` — hoje a migração em produção
+ainda é feita com `containerOverrides` sobre a task da API, e essa imagem é o caminho mais limpo
+para quando existir uma task definition dedicada.
+
+---
+
+## Arquitetura na AWS
+
+Onde esta API roda em produção, e por quê. O detalhamento completo — decisões, custos, comandos e o
+histórico de cada fase — vive no repositório de deploy
+([`sistema-controle-despesas-deploy/docs/`](https://github.com/gbrlmzl/sistema-controle-despesas-deploy/tree/main/docs));
+aqui fica o mapa e o que ele implica para quem mexe neste código.
+
+> **O que esta seção não traz, de propósito:** ID da conta AWS, o Elastic IP da instância, IDs de
+> instância/security group e o valor de qualquer segredo. O IP em particular **não é detalhe
+> cosmético** — o desenho inteiro depende de a origem ser inalcançável fora da borda, e publicá-lo
+> desfaria isso. Segredo nenhum mora em arquivo versionado: tudo vem do SSM Parameter Store.
+
+### A topologia
+
+```mermaid
+flowchart TB
+    U[Navegador]
+    CF["Cloudflare · proxy · PoP GRU"]
+
+    subgraph EC2["EC2 t4g.small · Graviton ARM64 · 2 GB · us-east-2 · AZ única"]
+        subgraph ECS["Cluster ECS · launch type EC2 · networkMode bridge"]
+            E["cronos-edge<br/>Caddy :443 e :80"]
+            F["cronos-front<br/>Next.js :3000"]
+            A["cronos-app<br/>esta API :8080"]
+            D["cronos-data<br/>PostgreSQL 17 :5432"]
+        end
+        EBS[("EBS gp3 10 GB<br/>dedicado")]
+    end
+
+    S3[("S3 · bucket privado<br/>de comprovantes")]
+    SSM[/"SSM Parameter Store"/]
+    CW[/"CloudWatch Logs"/]
+
+    U -->|HTTPS| CF
+    CF -->|"HTTPS 443 · cert Origin CA<br/>+ header X-Origin-Verify"| E
+    E --> F
+    F -->|"API_URL=http://api:8080"| A
+    A --> D
+    D -.dados.-> EBS
+    A -->|"presigned POST/GET"| S3
+    A -.->|"secrets por ARN"| SSM
+    A -.->|"stdout e stderr"| CW
+```
+
+| Peça | Escolha | Por quê |
+| --- | --- | --- |
+| Compute | **1 EC2 `t4g.small`** (Graviton, ARM64, 2 GB), ASG `min=max=1` | Instância única já paga: o custo marginal de cada container é zero. ARM corta boa parte do preço da mesma capacidade x86 |
+| Orquestração | **ECS com launch type EC2**, `networkMode: bridge` | Fargate cobraria por task e não suporta `extraHosts`; o `bridge` com portas fixas no host é o que deixa quatro services conversarem sem service discovery |
+| Banco | **Postgres 17 em container**, dados em **EBS gp3 dedicado** | RDS `db.t4g.micro` custaria ~US$ 12,65/mês a mais. O volume é separado do disco raiz porque o raiz **morre com a instância** — e substituir instância é operação normal num ASG |
+| Backup | Snapshot diário via **DLM**, retenção 7 dias | Um volume EBS vive numa única AZ, e é isso que prende o ASG a uma AZ só |
+| Imagens | CI publica no **GHCR**; produção puxa do **ECR** | O pacote do GHCR é privado, e puxar de registry de terceiro exigiria `repositoryCredentials` + Secrets Manager. Com ECR a `ecsTaskExecutionRole` já autentica sozinha |
+| Segredos | **SSM Parameter Store**, tier Standard (`SecureString` sobre KMS `aws/ssm`) | Gratuito. O Secrets Manager faria o mesmo com rotação automática, por US$ 0,40/segredo/mês — pagar por rotação que não acontece |
+| Logs | **CloudWatch Logs**, um log group por service, retenção 7 dias | É o destino do `morgan` e do `logSecurityEvent` |
+| Entrada | **Cloudflare** (proxied) → **Caddy** na instância | Ver "A borda" |
+| Balanceador | **nenhum ALB** | ~US$ 16/mês para distribuir tráfego entre uma instância só. É a decisão de maior impacto financeiro da infra |
+
+Quatro services, um container cada — `cronos-data`, `cronos-app` (esta API), `cronos-front` e
+`cronos-edge`. **Separar em tasks distintas custa US$ 0,00 e evita que todo deploy do front
+reinicie a API junto**: no ECS a task é a unidade atômica de implantação, e com `essential: true`
+um crash do front derrubaria a API na mesma task.
+
+### O que isso impõe a este código
+
+Nada aqui é decoração de infraestrutura — são restrições que aparecem no código da API:
+
+| Restrição | Onde aparece |
+| --- | --- |
+| **Imagem `linux/arm64`** | A instância é Graviton: uma task amd64 morre com `exec format error`. É a razão da matrix de plataformas no CI |
+| **`readonlyRootFilesystem: true`** | A task roda com o filesystem raiz travado — uma RCE não consegue gravar payload. A API não escreve em disco, e por isso não precisa de `tmpfs` nenhum (o front precisa, para o cache do Next) |
+| **Limite rígido de memória (448 MiB)** | O documento de arquitetura recomenda limite flexível em quase tudo; a API levou rígido de propósito. Sem ele, um vazamento cresce até o kernel escolher uma vítima — e o OOM killer tende a escolher o **maior** processo, que seria o Postgres. Com o limite, uma API descontrolada morre sozinha |
+| **`GET /health` como health check da task** | E **não** `/ready`. O health check do container responde "reiniciar resolve?"; um `/ready` ali faria uma indisponibilidade do banco reiniciar a API em loop, que é a reação errada |
+| **Graceful shutdown** | `desiredCount=1` com porta fixa no host obriga `minimumHealthyPercent=0`: a task antiga **sai antes** de a nova entrar. O `SIGTERM` tratado em `server.ts` é o que evita matar requisições em voo a cada deploy |
+| **Migração fora do processo que serve tráfego** | Em produção a migration é um `ecs run-task` avulso com `containerOverrides`, mesmo princípio do serviço `migrate` do Compose |
+| **`purge:tokens` como job avulso** | Nunca um `setInterval` dentro da API — que rodaria N vezes se um dia houver N instâncias |
+| **Cookies `secure` em produção** | Implica HTTPS obrigatório de ponta a ponta, o que faz a borda ser requisito, não enfeite |
+| **Proxy same-origin no front** | O navegador nunca fala com esta API direto. Por isso o CORS tem origem única, e a `GOOGLE_CALLBACK_URL` aponta para o **domínio do front**, não para o endereço da API |
+
+### Segredos: por que `secrets` e não `environment`
+
+Variável de ambiente numa task definition é **texto plano**, legível por qualquer pessoa com
+permissão de leitura no ECS — no console, num `describe-task-definition`, inclusive para quem só
+deveria poder olhar a configuração. O bloco `secrets` guarda apenas o **ARN do parâmetro**, e o
+valor real é resolvido em runtime pelo agente ECS.
+
+Os parâmetros vivem sob o prefixo `/cronos/api/*` (e `/cronos/postgres/*` para o banco). O
+Parameter Store trata `/` como hierarquia, e é isso que permite escrever a policy IAM sobre
+`parameter/cronos/api/*` — dando à execution role acesso a exatamente esses parâmetros e a nenhum
+outro da conta. Batizar todo parâmetro novo sob esse prefixo é o que evita mexer em IAM a cada
+variável nova.
+
+**Só é `SecureString` o que é segredo de fato.** Usuário e nome do banco são `String` comum: já
+estão no `docker-compose.yml` versionado, e marcá-los como secretos daria a falsa impressão de que
+não estão.
+
+Duas roles, papéis distintos:
+
+- **Execution role** (`ecsTaskExecutionRole`) — é do **agente ECS**, não do seu código. Puxa a
+  imagem do ECR e resolve os `secrets` antes de o container existir.
+- **Task role** — é do **processo**, para chamar APIs da AWS em runtime. Ficou **vazia** enquanto a
+  API não falava com serviço nenhum da AWS. Com a chegada dos comprovantes no S3 isso deixou de ser
+  verdade: o caminho pretendido em produção é a task role, e é por isso que
+  `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` são **opcionais** no `env.ts` — credencial explícita é
+  para desenvolvimento local; na AWS o SDK pega a credencial da role sozinho.
+
+### Comprovantes no S3
+
+O bucket é **privado e versionado**, e o arquivo **nunca passa pela API**: o navegador faz o upload
+direto por *presigned POST* (não PUT — só o POST aceita `content-length-range` como condição
+assinada, que é o que faz o teto de 5 MB ser aplicado pelo **próprio S3**). A leitura é sempre URL
+pré-assinada de 5 minutos, emitida sob demanda.
+
+Isso tem duas consequências operacionais:
+
+- O bucket precisa de **CORS**, e com os métodos certos. `POST` cobre o upload; **`GET` também é
+  necessário**, porque o front lê a imagem por `fetch` para convertê-la antes de salvar. O PDF não
+  depende disso (sai por navegação com `Content-Disposition: attachment`, e navegação não passa por
+  CORS) — então a falta do `GET` quebra **só** o download de comprovante-imagem.
+- Sem `S3_REGION`/`S3_BUCKET` a API sobe normalmente e **só** as rotas de comprovante respondem
+  `503` (`storageEnabled`, mesmo mecanismo de `googleAuthEnabled` e `mailEnabled`). Isso não é
+  tolerância a erro de configuração: é o que permite um ambiente sem S3 — CI incluído — exercitar
+  todo o resto do fluxo de acertos.
+
+### A borda
+
+```
+Internet ──HTTPS──▶ Cloudflare ──HTTPS :443──▶ Caddy ──▶ front :3000 ──▶ api :8080
+                    (proxy, PoP GRU)  (Origin CA)  (valida X-Origin-Verify)
+```
+
+A origem é **fechada**: o Security Group libera a 443 apenas para a prefix list de IPs da
+Cloudflare, e o TLS até a origem usa um certificado **Origin CA** com a Cloudflare em modo *Full
+(strict)*. Como essa prefix list libera a Cloudflare **inteira**, uma Transform Rule injeta um
+header secreto (`X-Origin-Verify`) que o Caddy valida — sem ele, qualquer cliente da Cloudflare
+poderia apontar um proxy para a origem.
+
+Um caminho antigo via CloudFront (porta 80, restrita à prefix list gerenciada da AWS) continua vivo
+em paralelo, deliberadamente: enquanto os dois servem o mesmo sistema, o rollback é trocar de URL.
+
+Duas coisas que essa borda cobra deste código:
+
+- **`trust proxy` fixado em `1`.** Confiar na cadeia inteira deixaria qualquer cliente forjar
+  `X-Forwarded-For` e escapar do rate limit. O Caddy reescreve o header a partir do
+  `CF-Connecting-IP`, mas **fixar o número certo de saltos é uma verificação em aberto**: se a API
+  registrar IP privado ou IP da Cloudflare nos eventos de segurança, o limitador está colocando o
+  mundo inteiro no mesmo balde.
+- **A prefix list da Cloudflare é mantida à mão.** A do CloudFront era gerenciada pela AWS; esta
+  não. Se a Cloudflare anunciar uma faixa nova, parte do tráfego começa a dar timeout **sem nenhum
+  erro do lado da aplicação**.
+
+### Deploy: o que é automático e o que não é
+
+```
+push na main ──▶ CI (test → build → publish GHCR :sha/:latest) ──▶ dispatch
+                                                                     │
+                         repo de deploy: e2e da stack completa ◀──────┘
+                                    │ passou
+                                    ▼
+                             re-tag :stable no GHCR
+                                    │
+                   ─────────────────┼─────────  daqui para baixo é manual
+                                    ▼
+             espelhar :stable → ECR ──▶ run-task da migration ──▶ update-service
+```
+
+**Não existe CD para o ECS.** Publicar no GHCR e passar no e2e não coloca nada em produção: o
+espelhamento para o ECR, a migration e o `update-service` são passos manuais. Duas armadilhas
+conhecidas desse trecho:
+
+- **Espelhar `:stable`, nunca `:latest`.** O `:latest` é publicado **antes** de o e2e rodar; o
+  `:stable` só existe **depois** que ele passa. Espelhar `:latest` manda para produção um artefato
+  que a validação de ponta a ponta ainda não aprovou, e deixa a tag validada sem uso.
+- **O espelhamento não pode achatar a arquitetura.** Um `docker pull` baixa a arquitetura do host
+  que roda o comando; feito de uma máquina x86, manda uma imagem amd64 para uma instância Graviton,
+  que morre com `exec format error`. O caminho correto é `docker buildx imagetools create`, que
+  copia os manifests registry→registry sem escolher plataforma.
+
+Antes de sobrescrever a tag em produção, vale retaguear a imagem que está no ar (`ecr put-image`
+com um `rollback-<data>`): sem tag, ela vira intocável e o rollback deixa de ser um comando.
+
+### Pendências de infraestrutura
+
+Estado documentado em **29/08/2026**. O runbook de execução e o retrato mais recente ficam no
+repositório de deploy — confira lá antes de agir sobre qualquer item.
+
+| Pendência | Impacto |
+| --- | --- |
+| **`FRONTEND_URL` ainda é placeholder em produção** | Alimenta o CORS com `credentials: true` e o redirect pós-OAuth. Precisa virar a origem real |
+| **Grupos Google OAuth, SMTP e S3 ausentes da task definition** | Código pronto e inerte: o botão do Google não funciona, a recuperação de senha **completa o fluxo sem enviar email** e os comprovantes respondem `503`. ⚠️ Cada grupo é **tudo ou nada** — preencher pela metade **impede a API de subir**, e o sintoma é task que nunca fica `healthy` |
+| **Task role sem permissão sobre o bucket** | Sem ela (ou sem credencial explícita), o storage não funciona nem com as variáveis preenchidas |
+| **CORS do bucket sem `GET`** | Quebra só o download de comprovante-imagem |
+| **Amazon SES está fora como provedor SMTP** | Não é preferência: o `env.ts` valida `SMTP_USER` com `z.email()`, e o usuário SMTP do SES é uma credencial `AKIA…`. Resend (`resend`) e SendGrid (`apikey`) caem pelo mesmo motivo. Passam os provedores cujo login é um endereço |
+| **Espelhamento no ECR e `update-service` manuais** | Todo artefato novo exige a sequência acima à mão. Automatizar é o próximo passo do pipeline |
+| **`Caddyfile` e certificados não sobrevivem à troca da instância** | Criados à mão no host, fora do versionamento da task definition — o que também torna o rollback de revisão uma ilusão parcial: a config volta, o arquivo não |
+| **Sem WAF e sem rate limiting na borda** | Decisão de orçamento. O rate limiting da própria API é a única proteção contra abuso de rota |
 
 ---
 
@@ -603,6 +865,9 @@ flowchart LR
 | `npm start` | Roda o build (`dist/server.js`) |
 | `npm test` | Suíte completa |
 | `npm run test:coverage` | Suíte com relatório de cobertura |
+| `npm run lint` | Lint + formatação + ordem dos imports (`biome check`), sem alterar arquivos |
+| `npm run lint:fix` | O mesmo, aplicando as correções seguras (`biome check --write`) |
+| `npm run lint:ci` | Versão do CI (`biome ci`), com anotações no formato do GitHub |
 | `npm run prisma:generate` | Regera o Prisma Client |
 | `npm run purge:tokens` | Limpa refresh tokens, tokens de redefinição de senha e comprovantes órfãos expirados, e sai (agendado como task avulsa) |
 | `npm run mail:test -- destino@exemplo.com` | Envia um email de teste pelo SMTP configurado, para validar as credenciais |
@@ -618,6 +883,10 @@ escritas, discutidas e aprovadas antes do código.
 - [`docs/plano-api-node-express.md`](docs/plano-api-node-express.md) — decisão de separar a API
   do Next.js, arquitetura em camadas, desenho da autenticação, fases de implementação e a
   estratégia de Docker/CI.
+- [`docs/arquitetura-autenticacao-e-autorizacao.md`](docs/arquitetura-autenticacao-e-autorizacao.md)
+  — descrição do módulo de auth como está implementado, atravessando front, API e borda: fluxos
+  de login, renovação e ação autorizada, o modelo de autorização em cinco camadas e os
+  trade-offs assumidos.
 - [`docs/revisao-seguranca-deploy-aws.md`](docs/revisao-seguranca-deploy-aws.md) — revisão de
   segurança pré-deploy: cada item `SEC-*` referenciado nos comentários do código, mais os itens
   `INFRA-*` da camada AWS.
@@ -626,6 +895,15 @@ escritas, discutidas e aprovadas antes do código.
 - [`docs/plano-registro-de-pagamentos.md`](docs/plano-registro-de-pagamentos.md) — decisões
   (`D-*`/`RN-*`) e roteiro de implementação dos acertos de pagamento com comprovante no S3.
 - [`docs/exemplos-insomnia/`](docs/exemplos-insomnia) — exemplos de requisição.
+
+A camada de infraestrutura é documentada no repositório de deploy, com o mesmo critério:
+[`arquitetura-aws.md`](https://github.com/gbrlmzl/sistema-controle-despesas-deploy/blob/main/docs/arquitetura-aws.md)
+(decisões, custos e cenários), [`api-aws.md`](https://github.com/gbrlmzl/sistema-controle-despesas-deploy/blob/main/docs/api-aws.md)
+(a task definition desta API, campo a campo),
+[`banco-de-dados-aws.md`](https://github.com/gbrlmzl/sistema-controle-despesas-deploy/blob/main/docs/banco-de-dados-aws.md)
+(volume EBS, SSM, IAM) e
+[`borda-cloudflare.md`](https://github.com/gbrlmzl/sistema-controle-despesas-deploy/blob/main/docs/borda-cloudflare.md)
+(a borda atual).
 
 Os comentários no código explicam **por que** algo é daquele jeito, não o que a linha faz —
 vale lê-los ao mexer em `app.ts`, `rateLimit.ts`, `session.ts` e nos utilitários operacionais.

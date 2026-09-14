@@ -38,7 +38,11 @@ describe('createReadinessHandler (SEC-17)', () => {
   it('responde 503 — e não 500 — quando o banco não responde', async () => {
     // 503 é o status que diz "estou de pé, mas não me mande tráfego". É o que faz o
     // ALB tirar a task do balanceamento em vez de alguém tratá-la como bug da app.
-    const d = deps({ ping: jest.fn(async () => { throw new Error('conexão recusada'); }) as ReadinessDependencies['ping'] });
+    const d = deps({
+      ping: jest.fn(async () => {
+        throw new Error('conexão recusada');
+      }) as ReadinessDependencies['ping'],
+    });
     const res = mockResponse();
 
     await createReadinessHandler(d)({} as Request, res, noop);
@@ -51,7 +55,11 @@ describe('createReadinessHandler (SEC-17)', () => {
     // Mesmo raciocínio do SEC-04: o erro do Prisma entrega host, porta e nome do banco.
     // E /ready é o endpoint que um scanner encontra primeiro.
     const segredo = 'connect ECONNREFUSED db-interno.prod.local:5432';
-    const d = deps({ ping: jest.fn(async () => { throw new Error(segredo); }) as ReadinessDependencies['ping'] });
+    const d = deps({
+      ping: jest.fn(async () => {
+        throw new Error(segredo);
+      }) as ReadinessDependencies['ping'],
+    });
     const res = mockResponse();
 
     await createReadinessHandler(d)({} as Request, res, noop);
@@ -63,7 +71,11 @@ describe('createReadinessHandler (SEC-17)', () => {
   it('registra a falha no log, com contexto', async () => {
     // Sem isto, a task sai do balanceamento e ninguém descobre por quê.
     const falha = new Error('conexão recusada');
-    const d = deps({ ping: jest.fn(async () => { throw falha; }) as ReadinessDependencies['ping'] });
+    const d = deps({
+      ping: jest.fn(async () => {
+        throw falha;
+      }) as ReadinessDependencies['ping'],
+    });
 
     await createReadinessHandler(d)({} as Request, mockResponse(), noop);
 
@@ -73,9 +85,15 @@ describe('createReadinessHandler (SEC-17)', () => {
   it('não deixa o erro escapar pro errorHandler', async () => {
     // Se o handler rejeitasse, o Express 5 mandaria pro errorHandler e a resposta viraria
     // 500 — que o ALB trata como "task quebrada", não como "task ocupada".
-    const d = deps({ ping: jest.fn(async () => { throw new Error('qualquer'); }) as ReadinessDependencies['ping'] });
+    const d = deps({
+      ping: jest.fn(async () => {
+        throw new Error('qualquer');
+      }) as ReadinessDependencies['ping'],
+    });
 
-    await expect(createReadinessHandler(d)({} as Request, mockResponse(), noop)).resolves.toBeUndefined();
+    await expect(
+      createReadinessHandler(d)({} as Request, mockResponse(), noop),
+    ).resolves.toBeUndefined();
     expect(noop).not.toHaveBeenCalled();
   });
 });

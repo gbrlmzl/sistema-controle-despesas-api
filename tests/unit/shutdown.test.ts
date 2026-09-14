@@ -188,7 +188,11 @@ describe('createShutdownHandler (SEC-08)', () => {
         // Nunca resolve — simula um SMTP travado.
         const flushPendingWork = jest.fn(() => new Promise<void>(() => undefined));
         const { deps, finishClose } = makeDeps({ flushPendingWork });
-        const shutdown = createShutdownHandler({ ...deps, flushTimeoutMs: 5_000, timeoutMs: 15_000 });
+        const shutdown = createShutdownHandler({
+          ...deps,
+          flushTimeoutMs: 5_000,
+          timeoutMs: 15_000,
+        });
 
         shutdown('SIGTERM');
         expect(deps.closeServer).not.toHaveBeenCalled();

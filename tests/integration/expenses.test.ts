@@ -57,7 +57,11 @@ async function createResidenceWithMember(
 // Junta mais um membro a uma residência já existente, pelo mesmo fluxo de convite.
 // Usado pelos testes de D-29 (simplificação de dívidas), que precisam de mais de 2
 // participantes para gerar pares devedor→credor de verdade.
-async function addMemberToResidence(owner: RegisteredUser, code: string, memberName: string): Promise<RegisteredUser> {
+async function addMemberToResidence(
+  owner: RegisteredUser,
+  code: string,
+  memberName: string,
+): Promise<RegisteredUser> {
   const member = await registerUser(memberName);
   await member.agent.post('/residences/join-requests').send({ code });
 
@@ -81,7 +85,9 @@ afterAll(async () => {
   // Mesma ordem da limpeza em residences.test.ts: Residence.ownerId não tem
   // onDelete: Cascade, então a residência precisa ser removida antes do usuário.
   // Expense e MonthClosure cascateiam a partir da residência.
-  await prisma.residence.deleteMany({ where: { owner: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } } });
+  await prisma.residence.deleteMany({
+    where: { owner: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } },
+  });
   await prisma.user.deleteMany({ where: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } });
   await prisma.$disconnect();
 });
@@ -120,9 +126,12 @@ describe('lançamento e consulta de despesas', () => {
   });
 
   it('membro lança uma despesa, que cai na competência aberta (RN-020)', async () => {
-    const response = await member.agent
-      .post(`/residences/${code}/expenses`)
-      .send({ name: 'Supermercado', valueInCents: 18050, category: 'ALIMENTACAO', isRecurring: false });
+    const response = await member.agent.post(`/residences/${code}/expenses`).send({
+      name: 'Supermercado',
+      valueInCents: 18050,
+      category: 'ALIMENTACAO',
+      isRecurring: false,
+    });
 
     expect(response.status).toBe(201);
     expect(response.body.expense).toMatchObject({
@@ -154,7 +163,9 @@ describe('lançamento e consulta de despesas', () => {
     //§6.7 -> competência aberta não tem acerto nenhum.
     expect(response.body.settlement).toBeNull();
 
-    const memberGroup = response.body.byMember.find((group: { userId: number }) => group.userId === member.id);
+    const memberGroup = response.body.byMember.find(
+      (group: { userId: number }) => group.userId === member.id,
+    );
     expect(memberGroup.totalInCents).toBe(18050);
   });
 
@@ -168,30 +179,46 @@ describe('lançamento e consulta de despesas', () => {
   it('o autor edita a própria despesa', async () => {
     const response = await member.agent
       .patch(`/residences/${code}/expenses/${memberExpenseId}`)
-      .send({ name: 'Supermercado Editado', valueInCents: 20000, category: 'ALIMENTACAO', isRecurring: false });
+      .send({
+        name: 'Supermercado Editado',
+        valueInCents: 20000,
+        category: 'ALIMENTACAO',
+        isRecurring: false,
+      });
 
     expect(response.status).toBe(200);
-    expect(response.body.expense).toMatchObject({ name: 'Supermercado Editado', valueInCents: 20000 });
+    expect(response.body.expense).toMatchObject({
+      name: 'Supermercado Editado',
+      valueInCents: 20000,
+    });
   });
 
   it('GET /expenses/recurring lista a despesa recorrente do owner', async () => {
     const response = await owner.agent.get(`/residences/${code}/expenses/recurring`);
 
     expect(response.status).toBe(200);
-    expect(response.body.expenses).toEqual(expect.arrayContaining([expect.objectContaining({ id: recurringExpenseId })]));
+    expect(response.body.expenses).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: recurringExpenseId })]),
+    );
   });
 
   it('quem não é autor não pode parar a recorrência alheia (404)', async () => {
-    const response = await member.agent.delete(`/residences/${code}/expenses/${recurringExpenseId}/recurrence`);
+    const response = await member.agent.delete(
+      `/residences/${code}/expenses/${recurringExpenseId}/recurrence`,
+    );
     expect(response.status).toBe(404);
   });
 
   it('o autor para a própria recorrência, e ela some da listagem de recorrentes', async () => {
-    const response = await owner.agent.delete(`/residences/${code}/expenses/${recurringExpenseId}/recurrence`);
+    const response = await owner.agent.delete(
+      `/residences/${code}/expenses/${recurringExpenseId}/recurrence`,
+    );
     expect(response.status).toBe(204);
 
     const list = await owner.agent.get(`/residences/${code}/expenses/recurring`);
-    expect(list.body.expenses).toEqual(expect.not.arrayContaining([expect.objectContaining({ id: recurringExpenseId })]));
+    expect(list.body.expenses).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ id: recurringExpenseId })]),
+    );
   });
 
   it('o autor exclui (logicamente) a própria despesa, que some da listagem', async () => {
@@ -199,7 +226,9 @@ describe('lançamento e consulta de despesas', () => {
     expect(response.status).toBe(204);
 
     const list = await owner.agent.get(`/residences/${code}/expenses`);
-    expect(list.body.byMember).toEqual(expect.not.arrayContaining([expect.objectContaining({ userId: member.id })]));
+    expect(list.body.byMember).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ userId: member.id })]),
+    );
   });
 });
 
@@ -210,7 +239,10 @@ describe('fechamento e reabertura de mês', () => {
   let recurringExpenseId: string;
 
   beforeAll(async () => {
-    ({ owner, member, code } = await createResidenceWithMember('Dono Fechamento', 'Membro Fechamento'));
+    ({ owner, member, code } = await createResidenceWithMember(
+      'Dono Fechamento',
+      'Membro Fechamento',
+    ));
 
     const expenseResponse = await member.agent
       .post(`/residences/${code}/expenses`)
@@ -241,13 +273,17 @@ describe('fechamento e reabertura de mês', () => {
     expect(response.body.closure).toMatchObject({ month: currentMonth, year: currentYear });
     expect(response.body.recurringExpensesGenerated).toBe(1);
 
-    const nextMonthList = await owner.agent.get(`/residences/${code}/expenses?month=${nextMonth}&year=${nextYear}`);
+    const nextMonthList = await owner.agent.get(
+      `/residences/${code}/expenses?month=${nextMonth}&year=${nextYear}`,
+    );
     expect(nextMonthList.body.count).toBe(1);
     expect(nextMonthList.body.byMember[0].expenses[0]).toMatchObject({ name: 'Internet' });
   });
 
   it('a competência agora fechada aparece com isClosed=true e o nome de quem fechou', async () => {
-    const response = await owner.agent.get(`/residences/${code}/expenses?month=${currentMonth}&year=${currentYear}`);
+    const response = await owner.agent.get(
+      `/residences/${code}/expenses?month=${currentMonth}&year=${currentYear}`,
+    );
     expect(response.body.isClosed).toBe(true);
     expect(response.body.closedByName).toBe(owner.name);
   });
@@ -255,7 +291,12 @@ describe('fechamento e reabertura de mês', () => {
   it('editar uma despesa do mês fechado dá 409', async () => {
     const response = await member.agent
       .patch(`/residences/${code}/expenses/${recurringExpenseId}`)
-      .send({ name: 'Internet Editada', valueInCents: 10000, category: 'ASSINATURAS', isRecurring: true });
+      .send({
+        name: 'Internet Editada',
+        valueInCents: 10000,
+        category: 'ASSINATURAS',
+        isRecurring: true,
+      });
     expect(response.status).toBe(409);
   });
 
@@ -267,26 +308,36 @@ describe('fechamento e reabertura de mês', () => {
   });
 
   it('membro comum não pode reabrir o mês (403)', async () => {
-    const response = await member.agent.delete(`/residences/${code}/expenses/month-closures/${currentPeriod}`);
+    const response = await member.agent.delete(
+      `/residences/${code}/expenses/month-closures/${currentPeriod}`,
+    );
     expect(response.status).toBe(403);
   });
 
   it('reabrir um período que não é o fechamento mais recente dá 409', async () => {
     const wrongPeriod = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
-    const response = await owner.agent.delete(`/residences/${code}/expenses/month-closures/${wrongPeriod}`);
+    const response = await owner.agent.delete(
+      `/residences/${code}/expenses/month-closures/${wrongPeriod}`,
+    );
     expect(response.status).toBe(409);
   });
 
   it('owner reabre o mês fechado mais recente', async () => {
-    const response = await owner.agent.delete(`/residences/${code}/expenses/month-closures/${currentPeriod}`);
+    const response = await owner.agent.delete(
+      `/residences/${code}/expenses/month-closures/${currentPeriod}`,
+    );
     expect(response.status).toBe(204);
 
-    const list = await owner.agent.get(`/residences/${code}/expenses?month=${currentMonth}&year=${currentYear}`);
+    const list = await owner.agent.get(
+      `/residences/${code}/expenses?month=${currentMonth}&year=${currentYear}`,
+    );
     expect(list.body.isClosed).toBe(false);
   });
 
   it('reabrir de novo dá 404 (não há mais mês fechado)', async () => {
-    const response = await owner.agent.delete(`/residences/${code}/expenses/month-closures/${currentPeriod}`);
+    const response = await owner.agent.delete(
+      `/residences/${code}/expenses/month-closures/${currentPeriod}`,
+    );
     expect(response.status).toBe(404);
   });
 });
@@ -321,9 +372,12 @@ describe('acertos criados no fechamento (D-21/D-29)', () => {
     await memberC.agent
       .post(`/residences/${code}/expenses`)
       .send({ name: 'Aluguel', valueInCents: 20000, category: 'DOMESTICAS', isRecurring: false });
-    await memberD.agent
-      .post(`/residences/${code}/expenses`)
-      .send({ name: 'Condomínio', valueInCents: 20000, category: 'DOMESTICAS', isRecurring: false });
+    await memberD.agent.post(`/residences/${code}/expenses`).send({
+      name: 'Condomínio',
+      valueInCents: 20000,
+      category: 'DOMESTICAS',
+      isRecurring: false,
+    });
 
     const response = await owner.agent
       .post(`/residences/${code}/expenses/month-closures`)
@@ -334,7 +388,13 @@ describe('acertos criados no fechamento (D-21/D-29)', () => {
 
     const residence = await prisma.residence.findUnique({ where: { code }, select: { id: true } });
     const closure = await prisma.monthClosure.findUnique({
-      where: { residenceId_year_month: { residenceId: residence!.id, year: currentYear, month: currentMonth } },
+      where: {
+        residenceId_year_month: {
+          residenceId: residence!.id,
+          year: currentYear,
+          month: currentMonth,
+        },
+      },
       select: { id: true },
     });
     const settlements = await prisma.settlement.findMany({ where: { closureId: closure!.id } });
@@ -355,7 +415,9 @@ describe('acertos criados no fechamento (D-21/D-29)', () => {
 
     //§6.7 -> o bloco `settlement` embutido em GET /expenses (Fase 6). O owner é
     //devedor de um único par nesta competência, nada liquidado ainda.
-    const ownerExpenses = await owner.agent.get(`/residences/${code}/expenses?month=${currentMonth}&year=${currentYear}`);
+    const ownerExpenses = await owner.agent.get(
+      `/residences/${code}/expenses?month=${currentMonth}&year=${currentYear}`,
+    );
     expect(ownerExpenses.body.settlement).toMatchObject({
       status: 'AWAITING_PAYMENT',
       totals: { payerSide: { lines: 2, paid: 0 }, receiverSide: { lines: 2, confirmed: 0 } },
@@ -381,14 +443,24 @@ describe('acertos criados no fechamento (D-21/D-29)', () => {
       .post(`/residences/${code}/expenses`)
       .send({ name: 'Mercado', valueInCents: 10000, category: 'ALIMENTACAO', isRecurring: false });
 
-    await owner.agent.post(`/residences/${code}/expenses/month-closures`).send({ month: currentMonth, year: currentYear });
+    await owner.agent
+      .post(`/residences/${code}/expenses/month-closures`)
+      .send({ month: currentMonth, year: currentYear });
 
     const residence = await prisma.residence.findUnique({ where: { code }, select: { id: true } });
     const closure = await prisma.monthClosure.findUnique({
-      where: { residenceId_year_month: { residenceId: residence!.id, year: currentYear, month: currentMonth } },
+      where: {
+        residenceId_year_month: {
+          residenceId: residence!.id,
+          year: currentYear,
+          month: currentMonth,
+        },
+      },
       select: { id: true },
     });
-    const settlement = await prisma.settlement.findFirstOrThrow({ where: { closureId: closure!.id } });
+    const settlement = await prisma.settlement.findFirstOrThrow({
+      where: { closureId: closure!.id },
+    });
 
     // Criado direto no banco (em vez de passar pelo fluxo real de upload) só para
     // exercitar o bloqueio de reabertura (RN-077) de forma determinística.
@@ -404,7 +476,9 @@ describe('acertos criados no fechamento (D-21/D-29)', () => {
       },
     });
 
-    const response = await owner.agent.delete(`/residences/${code}/expenses/month-closures/${currentPeriod}`);
+    const response = await owner.agent.delete(
+      `/residences/${code}/expenses/month-closures/${currentPeriod}`,
+    );
     expect(response.status).toBe(409);
   });
 });
@@ -415,7 +489,10 @@ describe('seletor de competências (GET /expenses/competencies)', () => {
   let code: string;
 
   beforeAll(async () => {
-    ({ owner, member, code } = await createResidenceWithMember('Dono Competências', 'Membro Competências'));
+    ({ owner, member, code } = await createResidenceWithMember(
+      'Dono Competências',
+      'Membro Competências',
+    ));
   });
 
   it('rejeita requisição sem autenticação', async () => {
@@ -483,7 +560,10 @@ describe('relatório da residência', () => {
   let code: string;
 
   beforeAll(async () => {
-    ({ owner, member, code } = await createResidenceWithMember('Dono Relatório', 'Membro Relatório'));
+    ({ owner, member, code } = await createResidenceWithMember(
+      'Dono Relatório',
+      'Membro Relatório',
+    ));
 
     await owner.agent
       .post(`/residences/${code}/expenses`)

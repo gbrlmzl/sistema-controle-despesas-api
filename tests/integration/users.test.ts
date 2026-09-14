@@ -32,7 +32,9 @@ async function registerUser(name = 'Usuário de Teste'): Promise<RegisteredUser>
   const username = uniqueUsername();
   const password = 'senhaForte1';
 
-  const response = await agent.post('/auth/register').send({ name, username, email, password, confirmPassword: password });
+  const response = await agent
+    .post('/auth/register')
+    .send({ name, username, email, password, confirmPassword: password });
 
   return { agent, id: response.body.user.id, name, username, email, password };
 }
@@ -53,7 +55,11 @@ describe('GET /users/me', () => {
     const response = await user.agent.get('/users/me');
 
     expect(response.status).toBe(200);
-    expect(response.body.user).toMatchObject({ id: user.id, username: user.username, email: user.email });
+    expect(response.body.user).toMatchObject({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+    });
     expect(response.body.user.password).toBeUndefined();
     expect(response.body.user.hasPassword).toBe(true);
   });
@@ -67,7 +73,9 @@ describe('PATCH /users/me (perfil)', () => {
 
   it('rejeita avatar fora da whitelist', async () => {
     const user = await registerUser('Avatar Inválido');
-    const response = await user.agent.patch('/users/me').send({ avatar: '/avatars/nao-existe.svg' });
+    const response = await user.agent
+      .patch('/users/me')
+      .send({ avatar: '/avatars/nao-existe.svg' });
     expect(response.status).toBe(400);
   });
 
@@ -101,7 +109,9 @@ describe('PATCH /users/me (perfil)', () => {
 
   it('troca nome e avatar juntos', async () => {
     const user = await registerUser('Combo Antigo');
-    const response = await user.agent.patch('/users/me').send({ name: 'Combo Novo', avatar: AVATARS[5] });
+    const response = await user.agent
+      .patch('/users/me')
+      .send({ name: 'Combo Novo', avatar: AVATARS[5] });
 
     expect(response.status).toBe(200);
     expect(response.body.user.name).toBe('Combo Novo');
@@ -119,9 +129,11 @@ describe('PATCH /users/me/password', () => {
 
   it('rejeita quando a senha atual está incorreta', async () => {
     const user = await registerUser('Senha Errada');
-    const response = await user.agent
-      .patch('/users/me/password')
-      .send({ currentPassword: 'senhaErrada1', newPassword: 'novaSenha1', confirmNewPassword: 'novaSenha1' });
+    const response = await user.agent.patch('/users/me/password').send({
+      currentPassword: 'senhaErrada1',
+      newPassword: 'novaSenha1',
+      confirmNewPassword: 'novaSenha1',
+    });
 
     expect(response.status).toBe(401);
   });

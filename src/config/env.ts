@@ -13,7 +13,10 @@ function optionalString<T extends z.ZodType<string>>(schema: T) {
 // zero requisições — o limitador barraria tudo. Não dá pra reusar o helper acima (ele
 // exige saída string; aqui a saída é number).
 function optionalPositiveInt() {
-  return z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional());
+  return z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  );
 }
 
 const envSchema = z
@@ -47,7 +50,10 @@ const envSchema = z
     // isso, a suíte testa o limitador em vez das telas. Só tem efeito em development:
     // ver rateLimitDisabled no fim deste arquivo. O e2e orquestrado, que roda contra a
     // imagem de produção, usa os tetos configuráveis logo abaixo em vez desta.
-    RATE_LIMIT_DISABLED: z.preprocess((v) => (v === '' ? undefined : v), z.stringbool().default(false)),
+    RATE_LIMIT_DISABLED: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.stringbool().default(false),
+    ),
 
     // Tetos dos limitadores (SEC-01). Opcionais: sem elas vale o padrão declarado ao
     // lado da razão de cada limitador, em src/middlewares/rateLimit.ts.
@@ -88,7 +94,10 @@ const envSchema = z
     // z.coerce.number() transforma '' em 0 — o mesmo preprocess do optionalString
     // acima intercepta a string vazia antes da coação, mas aqui não dá pra reusar o
     // helper (ele exige saída string; a saída aqui é number).
-    SMTP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional()),
+    SMTP_PORT: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.coerce.number().int().positive().optional(),
+    ),
 
     // Armazenamento de comprovantes (Amazon S3, D-14/D-18). S3_REGION e S3_BUCKET são o
     // par que LIGA o upload — ver storageEnabled abaixo. Credenciais explícitas são só
@@ -115,12 +124,18 @@ const envSchema = z
   })
   .refine(
     (data) =>
-      [data.GOOGLE_CLIENT_ID, data.GOOGLE_CLIENT_SECRET, data.GOOGLE_CALLBACK_URL, data.COOKIE_SESSION_SECRET].every(
-        (v) => v !== undefined,
-      ) ||
-      [data.GOOGLE_CLIENT_ID, data.GOOGLE_CLIENT_SECRET, data.GOOGLE_CALLBACK_URL, data.COOKIE_SESSION_SECRET].every(
-        (v) => v === undefined,
-      ),
+      [
+        data.GOOGLE_CLIENT_ID,
+        data.GOOGLE_CLIENT_SECRET,
+        data.GOOGLE_CALLBACK_URL,
+        data.COOKIE_SESSION_SECRET,
+      ].every((v) => v !== undefined) ||
+      [
+        data.GOOGLE_CLIENT_ID,
+        data.GOOGLE_CLIENT_SECRET,
+        data.GOOGLE_CALLBACK_URL,
+        data.COOKIE_SESSION_SECRET,
+      ].every((v) => v === undefined),
     {
       message:
         'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL e COOKIE_SESSION_SECRET devem ser todos fornecidos juntos, ou nenhum deles.',
@@ -136,7 +151,8 @@ const envSchema = z
         (v) => v === undefined,
       ),
     {
-      message: 'SMTP_HOST, SMTP_USER, SMTP_PORT, SMTP_PASSWORD e MAIL_FROM devem ser todos fornecidos juntos, ou nenhum deles.',
+      message:
+        'SMTP_HOST, SMTP_USER, SMTP_PORT, SMTP_PASSWORD e MAIL_FROM devem ser todos fornecidos juntos, ou nenhum deles.',
       path: ['SMTP_HOST'],
     },
   )
@@ -147,7 +163,8 @@ const envSchema = z
   .refine(
     (data) => (data.S3_ACCESS_KEY_ID !== undefined) === (data.S3_SECRET_ACCESS_KEY !== undefined),
     {
-      message: 'S3_ACCESS_KEY_ID e S3_SECRET_ACCESS_KEY devem ser fornecidos juntos, ou nenhum dos dois.',
+      message:
+        'S3_ACCESS_KEY_ID e S3_SECRET_ACCESS_KEY devem ser fornecidos juntos, ou nenhum dos dois.',
       path: ['S3_ACCESS_KEY_ID'],
     },
   );

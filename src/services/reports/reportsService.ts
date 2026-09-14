@@ -1,12 +1,13 @@
 import prisma from '../../config/prisma.js';
 import type { ExpenseCategory } from '../../generated/client.js';
+import { type Competency, getOpenCompetency } from '../expenses/expensesService.js';
 import { loadUserResidenceContext } from '../residences/residencesService.js';
-import { getOpenCompetency, type Competency } from '../expenses/expensesService.js';
 //3.1 do plano de acertos -> calculateSplit mora em splitService.ts agora (ela usa só
 //`prisma`, sem importar nenhum service, o que evita ciclo com expensesService.ts).
 //Reexportada aqui para não quebrar quem já importa calculateSplit de reportsService
 //(e importada normalmente, não só re-exportada, porque este arquivo também a usa abaixo).
 import { calculateSplit } from './splitService.js';
+
 export { calculateSplit };
 
 //RN-062 -> o gráfico de evolução mostra as últimas 6 competências
@@ -33,7 +34,12 @@ function baseFilter(residenceId: number, month: number, year: number, userId: nu
 
 //FEAT-026 -> quebra por categoria de uma competência. Passar userId restringe ao
 //relatório pessoal (RN-060: sempre dentro da residência atual).
-export async function categoryReport(residenceId: number, month: number, year: number, userId: number | null = null) {
+export async function categoryReport(
+  residenceId: number,
+  month: number,
+  year: number,
+  userId: number | null = null,
+) {
   const grouped = await prisma.expense.groupBy({
     by: ['category'],
     where: baseFilter(residenceId, month, year, userId),
@@ -70,7 +76,9 @@ export async function compareCompetencies(
     categoryReport(residenceId, previous.month, previous.year, userId),
   ]);
 
-  const previousByCategory = new Map(previousReport.categories.map((item) => [item.category, item.totalInCents]));
+  const previousByCategory = new Map(
+    previousReport.categories.map((item) => [item.category, item.totalInCents]),
+  );
   const seenCategories = new Set([
     ...currentReport.categories.map((item) => item.category),
     ...previousReport.categories.map((item) => item.category),
@@ -78,7 +86,8 @@ export async function compareCompetencies(
 
   const categories = [...seenCategories]
     .map((category) => {
-      const currentValue = currentReport.categories.find((item) => item.category === category)?.totalInCents ?? 0;
+      const currentValue =
+        currentReport.categories.find((item) => item.category === category)?.totalInCents ?? 0;
       const previousValue = previousByCategory.get(category) ?? 0;
 
       return {
@@ -89,7 +98,8 @@ export async function compareCompetencies(
         //RN-061 -> sem base de comparação não existe percentual com leitura útil. A
         //categoria é marcada como nova e o percentual fica nulo.
         isNew: previousValue === 0 && currentValue > 0,
-        percentage: previousValue > 0 ? ((currentValue - previousValue) / previousValue) * 100 : null,
+        percentage:
+          previousValue > 0 ? ((currentValue - previousValue) / previousValue) * 100 : null,
       };
     })
     .sort((a, b) => Math.abs(b.variationInCents) - Math.abs(a.variationInCents));
@@ -100,7 +110,9 @@ export async function compareCompetencies(
     variationInCents: currentReport.totalInCents - previousReport.totalInCents,
     percentage:
       previousReport.totalInCents > 0
-        ? ((currentReport.totalInCents - previousReport.totalInCents) / previousReport.totalInCents) * 100
+        ? ((currentReport.totalInCents - previousReport.totalInCents) /
+            previousReport.totalInCents) *
+          100
         : null,
     hasComparisonBase: previousReport.totalInCents > 0,
     categories,
@@ -140,7 +152,11 @@ export async function evolutionSeries(
 }
 
 //FEAT-035 -> média das competências anteriores por categoria, para sinalizar desvios.
-export async function averagesByCategory(residenceId: number, until: Competency, userId: number | null = null) {
+export async function averagesByCategory(
+  residenceId: number,
+  until: Competency,
+  userId: number | null = null,
+) {
   const window: Competency[] = [];
   let cursor = getPreviousCompetency(until);
 
@@ -149,7 +165,11 @@ export async function averagesByCategory(residenceId: number, until: Competency,
     cursor = getPreviousCompetency(cursor);
   }
 
-  const reports = await Promise.all(window.map((competency) => categoryReport(residenceId, competency.month, competency.year, userId)));
+  const reports = await Promise.all(
+    window.map((competency) =>
+      categoryReport(residenceId, competency.month, competency.year, userId),
+    ),
+  );
 
   //Só entram no cálculo as competências em que a categoria realmente teve
   //lançamento; meses sem movimento puxariam a média para baixo e gerariam alarme falso.
@@ -164,7 +184,10 @@ export async function averagesByCategory(residenceId: number, until: Competency,
     }
   }
 
-  const averages = new Map<ExpenseCategory, { averageInCents: number; monthsConsidered: number; reliable: boolean }>();
+  const averages = new Map<
+    ExpenseCategory,
+    { averageInCents: number; monthsConsidered: number; reliable: boolean }
+  >();
 
   for (const [category, data] of accumulated) {
     averages.set(category, {
@@ -179,7 +202,11 @@ export async function averagesByCategory(residenceId: number, until: Competency,
 }
 
 //Junta a quebra por categoria com a média histórica, marcando os desvios relevantes.
-export async function reportWithDeviations(residenceId: number, competency: Competency, userId: number | null = null) {
+export async function reportWithDeviations(
+  residenceId: number,
+  competency: Competency,
+  userId: number | null = null,
+) {
   const [report, averages] = await Promise.all([
     categoryReport(residenceId, competency.month, competency.year, userId),
     averagesByCategory(residenceId, competency, userId),
@@ -189,7 +216,12 @@ export async function reportWithDeviations(residenceId: number, competency: Comp
     const average = averages.get(category.category);
 
     if (!average || !average.reliable || average.averageInCents === 0) {
-      return { ...category, averageInCents: average?.averageInCents ?? null, deviation: null as number | null, aboveAverage: null as boolean | null };
+      return {
+        ...category,
+        averageInCents: average?.averageInCents ?? null,
+        deviation: null as number | null,
+        aboveAverage: null as boolean | null,
+      };
     }
 
     const deviation = (category.totalInCents - average.averageInCents) / average.averageInCents;
@@ -206,7 +238,12 @@ export async function reportWithDeviations(residenceId: number, competency: Comp
 }
 
 //FEAT-033 -> linhas da exportação, já com autor e categoria resolvidos.
-export async function expensesForExport(residenceId: number, month: number, year: number, userId: number | null = null) {
+export async function expensesForExport(
+  residenceId: number,
+  month: number,
+  year: number,
+  userId: number | null = null,
+) {
   const expenses = await prisma.expense.findMany({
     where: baseFilter(residenceId, month, year, userId),
     orderBy: { createdAt: 'asc' },
@@ -234,7 +271,12 @@ export type ReportTab = 'residence' | 'personal';
 
 //RN-010: só membro vê o relatório. CA-1 da US-024: a tela abre na aba da residência.
 //RN-060: a aba pessoal olha só para esta residência, nunca soma as outras.
-export async function getResidenceReport(code: string, userId: number, requestedCompetency: Competency | null, tab: ReportTab) {
+export async function getResidenceReport(
+  code: string,
+  userId: number,
+  requestedCompetency: Competency | null,
+  tab: ReportTab,
+) {
   const context = await loadUserResidenceContext(code, userId);
 
   const competency = requestedCompetency ?? (await getOpenCompetency(context.residence.id));
@@ -242,7 +284,12 @@ export async function getResidenceReport(code: string, userId: number, requested
 
   const [report, comparison, evolution, split, householdTotal, expenses] = await Promise.all([
     reportWithDeviations(context.residence.id, competency, filterUserId),
-    compareCompetencies(context.residence.id, competency, getPreviousCompetency(competency), filterUserId),
+    compareCompetencies(
+      context.residence.id,
+      competency,
+      getPreviousCompetency(competency),
+      filterUserId,
+    ),
     evolutionSeries(context.residence.id, competency, COMPETENCIES_IN_EVOLUTION, filterUserId),
     calculateSplit(context.residence.id, competency.month, competency.year),
     //CA-4 da US-025 -> o percentual que os gastos do usuário representam do total da casa

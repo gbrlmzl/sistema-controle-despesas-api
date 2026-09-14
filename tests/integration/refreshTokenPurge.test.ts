@@ -62,7 +62,9 @@ afterAll(async () => {
 describe('purgeExpiredRefreshTokens (SEC-09)', () => {
   it('apaga token expirado há mais que a janela de retenção', async () => {
     const userId = await criarUsuario();
-    const antigo = await criarToken(userId, { expiresAt: new Date(Date.now() - dias(REFRESH_TOKEN_RETENTION_DAYS + 1)) });
+    const antigo = await criarToken(userId, {
+      expiresAt: new Date(Date.now() - dias(REFRESH_TOKEN_RETENTION_DAYS + 1)),
+    });
 
     await purgeExpiredRefreshTokens();
 
@@ -118,8 +120,12 @@ describe('purgeExpiredRefreshTokens (SEC-09)', () => {
   it('devolve quantas linhas removeu', async () => {
     const userId = await criarUsuario();
     const alvos = [
-      await criarToken(userId, { expiresAt: new Date(Date.now() - dias(REFRESH_TOKEN_RETENTION_DAYS + 2)) }),
-      await criarToken(userId, { expiresAt: new Date(Date.now() - dias(REFRESH_TOKEN_RETENTION_DAYS + 3)) }),
+      await criarToken(userId, {
+        expiresAt: new Date(Date.now() - dias(REFRESH_TOKEN_RETENTION_DAYS + 2)),
+      }),
+      await criarToken(userId, {
+        expiresAt: new Date(Date.now() - dias(REFRESH_TOKEN_RETENTION_DAYS + 3)),
+      }),
     ];
     await criarToken(userId, { expiresAt: new Date(Date.now() + dias(7)) });
 

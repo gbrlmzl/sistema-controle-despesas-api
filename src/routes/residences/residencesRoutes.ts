@@ -1,14 +1,4 @@
 import { Router } from 'express';
-import { requireAuth } from '../../middlewares/auth.js';
-import { validateBody } from '../../middlewares/validate.js';
-import {
-  createJoinRequestSchema,
-  createResidenceSchema,
-  inviteUserSchema,
-  respondToAccessRequestSchema,
-  transferOwnerSchema,
-  updateResidenceSchema,
-} from '../../schemas/residencias.js';
 import {
   create,
   createJoinRequest,
@@ -25,6 +15,16 @@ import {
   transferOwner,
   update,
 } from '../../controllers/residences/residencesController.js';
+import { requireAuth } from '../../middlewares/auth.js';
+import { validateBody } from '../../middlewares/validate.js';
+import {
+  createJoinRequestSchema,
+  createResidenceSchema,
+  inviteUserSchema,
+  respondToAccessRequestSchema,
+  transferOwnerSchema,
+  updateResidenceSchema,
+} from '../../schemas/residencias.js';
 
 const router = Router();
 

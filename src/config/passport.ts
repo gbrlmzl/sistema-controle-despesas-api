@@ -1,7 +1,7 @@
 import passport from 'passport';
 import GoogleStrategy from 'passport-google-oidc';
-import { env, googleAuthEnabled } from './env.js';
 import { findOrCreateGoogleUser } from '../services/auth/authService.js';
+import { env, googleAuthEnabled } from './env.js';
 
 // Sem `passport.session()` de propósito: a API é stateless (JWT em cookie httpOnly),
 // então serializeUser/deserializeUser não se aplicam aqui — só existem pra sessão
@@ -14,7 +14,11 @@ if (googleAuthEnabled) {
         clientSecret: env.GOOGLE_CLIENT_SECRET!,
         callbackURL: env.GOOGLE_CALLBACK_URL!,
       },
-      (issuer: string, profile: passport.Profile, done: (err: Error | null, user?: Express.User) => void) => {
+      (
+        issuer: string,
+        profile: passport.Profile,
+        done: (err: Error | null, user?: Express.User) => void,
+      ) => {
         const email = profile.emails?.[0]?.value;
 
         // Sem e-mail não há como localizar/criar a conta — o Google sempre manda

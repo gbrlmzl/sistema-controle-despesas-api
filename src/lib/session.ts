@@ -2,7 +2,7 @@ import type { Response } from 'express';
 import ms from 'ms';
 import { env } from '../config/env.js';
 import { AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME } from '../middlewares/auth.js';
-import { issueRefreshToken, signToken, type AuthUser } from '../services/auth/authService.js';
+import { type AuthUser, issueRefreshToken, signToken } from '../services/auth/authService.js';
 
 // Os cookies de sessão nascem em mais de um controller: register/login/googleCallback
 // (auth) e, desde o SEC-06, a troca de senha (users). Manter isso privado no

@@ -44,7 +44,9 @@ function createSmtpSender(): SendEmail {
 function createDisabledSender(): SendEmail {
   return async function sendDisabledEmail(email: OutgoingEmail): Promise<void> {
     if (env.NODE_ENV === 'development') {
-      console.log(`[mailer] SMTP desabilitado — email não enviado.\nPara: ${email.to}\nAssunto: ${email.subject}\n${email.text}`);
+      console.log(
+        `[mailer] SMTP desabilitado — email não enviado.\nPara: ${email.to}\nAssunto: ${email.subject}\n${email.text}`,
+      );
     }
   };
 }

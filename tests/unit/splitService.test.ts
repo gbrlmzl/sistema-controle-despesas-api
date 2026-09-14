@@ -1,17 +1,19 @@
-import { simplifyDebts, type DebtPair } from '../../src/services/reports/splitService.js';
+import { type DebtPair, simplifyDebts } from '../../src/services/reports/splitService.js';
 
 // D-29 -> testado isolado de closeMonth: não depende de banco, só da lista de saldos
 // líquidos que calculateSplit já garante somar exatamente zero (RN-066).
 
 function sumByPayer(pairs: DebtPair[]): Map<number, number> {
   const totals = new Map<number, number>();
-  for (const pair of pairs) totals.set(pair.payerId, (totals.get(pair.payerId) ?? 0) + pair.amountInCents);
+  for (const pair of pairs)
+    totals.set(pair.payerId, (totals.get(pair.payerId) ?? 0) + pair.amountInCents);
   return totals;
 }
 
 function sumByReceiver(pairs: DebtPair[]): Map<number, number> {
   const totals = new Map<number, number>();
-  for (const pair of pairs) totals.set(pair.receiverId, (totals.get(pair.receiverId) ?? 0) + pair.amountInCents);
+  for (const pair of pairs)
+    totals.set(pair.receiverId, (totals.get(pair.receiverId) ?? 0) + pair.amountInCents);
   return totals;
 }
 
@@ -79,7 +81,9 @@ describe('simplifyDebts (D-29)', () => {
 
     const pairs = simplifyDebts(participants);
     const totalPaid = pairs.reduce((sum, p) => sum + p.amountInCents, 0);
-    const totalOwed = participants.filter((p) => p.balanceInCents < 0).reduce((sum, p) => sum - p.balanceInCents, 0);
+    const totalOwed = participants
+      .filter((p) => p.balanceInCents < 0)
+      .reduce((sum, p) => sum - p.balanceInCents, 0);
     expect(totalPaid).toBe(totalOwed);
   });
 

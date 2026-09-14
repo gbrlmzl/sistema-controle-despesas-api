@@ -4,14 +4,14 @@
 // não-membro sem escrever autorização nova em cada rota.
 
 import { randomUUID } from 'node:crypto';
-import prisma from '../../config/prisma.js';
 import { env, storageEnabled } from '../../config/env.js';
+import prisma from '../../config/prisma.js';
+import { storage } from '../../lib/storage.js';
 import { AppError } from '../../utils/AppError.js';
 import { logSecurityEvent } from '../../utils/logger.js';
-import { storage } from '../../lib/storage.js';
-import { loadUserResidenceContext } from '../residences/residencesService.js';
-import { createNotification, createNotifications } from '../notifications/notificationsService.js';
 import type { Competency } from '../expenses/expensesService.js';
+import { createNotification, createNotifications } from '../notifications/notificationsService.js';
+import { loadUserResidenceContext } from '../residences/residencesService.js';
 
 //D-27 -> extensão do objeto vem SEMPRE do Content-Type declarado, nunca do
 //originalName (que é só metadado de exibição, e nunca confiável).
@@ -60,7 +60,10 @@ export function settlementLineStatus(s: SettlementStamps): SettlementLineStatus 
   return 'PENDING';
 }
 
-function isReceiverReady(settlements: Array<SettlementStamps & { receiverId: number }>, receiverId: number): boolean {
+function isReceiverReady(
+  settlements: Array<SettlementStamps & { receiverId: number }>,
+  receiverId: number,
+): boolean {
   const mine = settlements.filter((s) => s.receiverId === receiverId);
   return mine.length > 0 && mine.every((s) => s.paidAt !== null || s.waivedAt !== null);
 }
@@ -94,7 +97,14 @@ function matchesSignature(contentType: string, bytes: Buffer): boolean {
 async function loadClosure(residenceId: number, period: Competency) {
   return prisma.monthClosure.findUnique({
     where: { residenceId_year_month: { residenceId, year: period.year, month: period.month } },
-    select: { id: true, month: true, year: true, closedAt: true, settledAt: true, closedBy: { select: { name: true } } },
+    select: {
+      id: true,
+      month: true,
+      year: true,
+      closedAt: true,
+      settledAt: true,
+      closedBy: { select: { name: true } },
+    },
   });
 }
 
@@ -120,7 +130,9 @@ async function applyTransitionSideEffects(params: {
   beforeSettlements: Array<SettlementStamps & { receiverId: number }>;
   touchedReceiverId: number | null;
 }): Promise<ClosureStatus> {
-  const afterSettlements = await prisma.settlement.findMany({ where: { closureId: params.closureId } });
+  const afterSettlements = await prisma.settlement.findMany({
+    where: { closureId: params.closureId },
+  });
 
   if (params.touchedReceiverId !== null) {
     const wasReady = isReceiverReady(params.beforeSettlements, params.touchedReceiverId);
@@ -140,7 +152,10 @@ async function applyTransitionSideEffects(params: {
   const statusAfter = closureStatus(afterSettlements);
 
   if (statusBefore !== 'SETTLED' && statusAfter === 'SETTLED') {
-    await prisma.monthClosure.update({ where: { id: params.closureId }, data: { settledAt: new Date() } });
+    await prisma.monthClosure.update({
+      where: { id: params.closureId },
+      data: { settledAt: new Date() },
+    });
 
     const members = await prisma.membership.findMany({
       where: { residenceId: params.residenceId },
@@ -201,8 +216,14 @@ export async function getClosureSettlements(code: string, userId: number, period
     settledAt: closure.settledAt,
     totals: {
       //"linha" aqui é um par (D-01/D-29); uma pessoa com 2 dívidas conta em 2 linhas.
-      payerSide: { lines: settlements.length, paid: settlements.filter((s) => s.paidAt !== null).length },
-      receiverSide: { lines: settlements.length, confirmed: settlements.filter((s) => s.confirmedAt !== null).length },
+      payerSide: {
+        lines: settlements.length,
+        paid: settlements.filter((s) => s.paidAt !== null).length,
+      },
+      receiverSide: {
+        lines: settlements.length,
+        confirmed: settlements.filter((s) => s.confirmedAt !== null).length,
+      },
     },
     canAct: !context.isArchived, //D-05
     canUpload: !context.isArchived && storageEnabled, //D-18
@@ -322,7 +343,12 @@ export async function completeReceipt(
   }
 
   const receipt = await prisma.paymentReceipt.findFirst({
-    where: { id: receiptId, settlementId, uploadedById: userId, settlement: { closureId: closure.id } },
+    where: {
+      id: receiptId,
+      settlementId,
+      uploadedById: userId,
+      settlement: { closureId: closure.id },
+    },
     include: { settlement: true, uploadedBy: { select: { name: true } } },
   });
   if (!receipt) {
@@ -383,7 +409,12 @@ export async function completeReceipt(
 
   const firstBytes = await storage.readFirstBytes(receipt.storageKey, 12);
   if (!firstBytes || !matchesSignature(receipt.declaredContentType, firstBytes)) {
-    logSecurityEvent('receipt_content_mismatch', { receiptId, settlementId, reason: 'magic-bytes', declared: receipt.declaredContentType });
+    logSecurityEvent('receipt_content_mismatch', {
+      receiptId,
+      settlementId,
+      reason: 'magic-bytes',
+      declared: receipt.declaredContentType,
+    });
     throw new AppError(422, 'O conteúdo do arquivo não corresponde ao tipo declarado.');
   }
 
@@ -392,7 +423,12 @@ export async function completeReceipt(
   const { updatedReceipt, updatedSettlement } = await prisma.$transaction(async (tx) => {
     const updatedReceipt = await tx.paymentReceipt.update({
       where: { id: receipt.id },
-      data: { status: 'STORED', storedAt: new Date(), contentType: info.contentType, sizeInBytes: info.sizeInBytes },
+      data: {
+        status: 'STORED',
+        storedAt: new Date(),
+        contentType: info.contentType,
+        sizeInBytes: info.sizeInBytes,
+      },
     });
     const updatedSettlement = await tx.settlement.update({
       where: { id: receipt.settlementId },
@@ -432,11 +468,19 @@ export async function completeReceipt(
 
 // --- 6.4 POST .../confirm ("Recebi o pagamento") ---
 
-export async function confirmReceived(code: string, userId: number, period: Competency, settlementId: string) {
+export async function confirmReceived(
+  code: string,
+  userId: number,
+  period: Competency,
+  settlementId: string,
+) {
   const context = await loadUserResidenceContext(code, userId);
 
   if (context.isArchived) {
-    throw new AppError(409, 'Esta residência está arquivada e não aceita confirmação de recebimento.'); //RN-078
+    throw new AppError(
+      409,
+      'Esta residência está arquivada e não aceita confirmação de recebimento.',
+    ); //RN-078
   }
 
   const closure = await loadClosure(context.residence.id, period);
@@ -452,7 +496,10 @@ export async function confirmReceived(code: string, userId: number, period: Comp
   if (settlement.receiverId !== userId) {
     if (settlement.payerId === userId) {
       //RN-074 -> esse lado liquida anexando comprovante, não confirmando.
-      throw new AppError(409, 'Você é o devedor deste par; esse lado liquida anexando comprovante.');
+      throw new AppError(
+        409,
+        'Você é o devedor deste par; esse lado liquida anexando comprovante.',
+      );
     }
     throw new AppError(403, 'Você não é o credor deste par de acerto.'); //RN-075
   }
@@ -494,14 +541,21 @@ export async function confirmReceived(code: string, userId: number, period: Comp
 
 // --- 6.5 GET .../receipts/:receiptId/url ---
 
-export async function getReceiptDownloadUrl(code: string, userId: number, period: Competency, receiptId: string) {
+export async function getReceiptDownloadUrl(
+  code: string,
+  userId: number,
+  period: Competency,
+  receiptId: string,
+) {
   const context = await loadUserResidenceContext(code, userId); //RN-080: qualquer membro
 
   const receipt = await prisma.paymentReceipt.findFirst({
     where: {
       id: receiptId,
       status: 'STORED',
-      settlement: { closure: { residenceId: context.residence.id, year: period.year, month: period.month } },
+      settlement: {
+        closure: { residenceId: context.residence.id, year: period.year, month: period.month },
+      },
     },
     select: { storageKey: true, contentType: true, originalName: true },
   });
@@ -512,7 +566,8 @@ export async function getReceiptDownloadUrl(code: string, userId: number, period
   const contentType = receipt.contentType ?? 'application/octet-stream';
   //PDF sai attachment, os três tipos de imagem saem inline (D-25).
   const disposition = contentType === 'application/pdf' ? 'attachment' : 'inline';
-  const fileName = receipt.originalName ?? `comprovante.${EXTENSION_BY_CONTENT_TYPE[contentType] ?? 'bin'}`;
+  const fileName =
+    receipt.originalName ?? `comprovante.${EXTENSION_BY_CONTENT_TYPE[contentType] ?? 'bin'}`;
 
   const url = await storage.createDownloadUrl({
     key: receipt.storageKey,
@@ -659,8 +714,14 @@ export async function getCompetencySettlementSummary(
   return {
     status: closureStatus(settlements),
     totals: {
-      payerSide: { lines: settlements.length, paid: settlements.filter((s) => s.paidAt !== null).length },
-      receiverSide: { lines: settlements.length, confirmed: settlements.filter((s) => s.confirmedAt !== null).length },
+      payerSide: {
+        lines: settlements.length,
+        paid: settlements.filter((s) => s.paidAt !== null).length,
+      },
+      receiverSide: {
+        lines: settlements.length,
+        confirmed: settlements.filter((s) => s.confirmedAt !== null).length,
+      },
     },
     mine: settlements
       .filter((s) => s.payerId === userId || s.receiverId === userId)

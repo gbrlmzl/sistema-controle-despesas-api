@@ -2,15 +2,6 @@ import { Router } from 'express';
 import { env, googleAuthEnabled } from '../../config/env.js';
 import passport from '../../config/passport.js';
 import {
-  forgotPasswordLimiter,
-  loginLimiter,
-  refreshLimiter,
-  registerLimiter,
-  resetPasswordLimiter,
-} from '../../middlewares/rateLimit.js';
-import { validateBody } from '../../middlewares/validate.js';
-import { forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, verifyResetTokenSchema } from '../../schemas/usuarios.js';
-import {
   forgotPassword,
   googleCallback,
   login,
@@ -20,6 +11,21 @@ import {
   resetPassword,
   verifyResetPasswordToken,
 } from '../../controllers/auth/authController.js';
+import {
+  forgotPasswordLimiter,
+  loginLimiter,
+  refreshLimiter,
+  registerLimiter,
+  resetPasswordLimiter,
+} from '../../middlewares/rateLimit.js';
+import { validateBody } from '../../middlewares/validate.js';
+import {
+  forgotPasswordSchema,
+  loginSchema,
+  registerSchema,
+  resetPasswordSchema,
+  verifyResetTokenSchema,
+} from '../../schemas/usuarios.js';
 
 const router = Router();
 
@@ -34,22 +40,38 @@ router.post('/logout', logout);
 
 // Recuperação de senha (docs/plano-recuperacao-de-senha.md). D-10 -> o token sempre
 // no corpo, nunca em parâmetro de rota.
-router.post('/forgot-password', forgotPasswordLimiter, validateBody(forgotPasswordSchema), forgotPassword);
+router.post(
+  '/forgot-password',
+  forgotPasswordLimiter,
+  validateBody(forgotPasswordSchema),
+  forgotPassword,
+);
 router.post(
   '/reset-password/verify',
   resetPasswordLimiter,
   validateBody(verifyResetTokenSchema),
   verifyResetPasswordToken,
 );
-router.post('/reset-password', resetPasswordLimiter, validateBody(resetPasswordSchema), resetPassword);
+router.post(
+  '/reset-password',
+  resetPasswordLimiter,
+  validateBody(resetPasswordSchema),
+  resetPassword,
+);
 
 // Só existe se as credenciais do Google estiverem configuradas (ver src/config/env.ts).
 if (googleAuthEnabled) {
-  router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
+  router.get(
+    '/google',
+    passport.authenticate('google', { scope: ['profile', 'email'], session: false }),
+  );
 
   router.get(
     '/google/callback',
-    passport.authenticate('google', { session: false, failureRedirect: `${env.FRONTEND_URL}/login?error=oauth` }),
+    passport.authenticate('google', {
+      session: false,
+      failureRedirect: `${env.FRONTEND_URL}/login?error=oauth`,
+    }),
     googleCallback,
   );
 }

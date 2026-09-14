@@ -28,7 +28,11 @@ export interface PasswordResetEmailInput {
   expiresInMinutes: number;
 }
 
-export function passwordResetEmail({ name, resetUrl, expiresInMinutes }: PasswordResetEmailInput): OutgoingEmail {
+export function passwordResetEmail({
+  name,
+  resetUrl,
+  expiresInMinutes,
+}: PasswordResetEmailInput): OutgoingEmail {
   const safeName = escapeHtml(name);
 
   const text = [
@@ -63,7 +67,9 @@ export interface PasswordResetGoogleAccountEmailInput {
 
 // D-11 -> Conta que só entra com Google não tem senha local pra redefinir. Este
 // template NÃO contém link de redefinição nenhum — é o que o teste unitário verifica.
-export function passwordResetGoogleAccountEmail({ name }: PasswordResetGoogleAccountEmailInput): OutgoingEmail {
+export function passwordResetGoogleAccountEmail({
+  name,
+}: PasswordResetGoogleAccountEmailInput): OutgoingEmail {
   const safeName = escapeHtml(name);
 
   const text = [

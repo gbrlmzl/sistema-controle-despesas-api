@@ -119,10 +119,13 @@ describe('POST /auth/register está protegido de criação em massa (SEC-01)', (
     // Corpo inválido é rejeitado no schema, sem tocar bcrypt nem banco — mas continua
     // consumindo cota, que é o comportamento desejado.
     for (let i = 1; i <= REGISTER_LIMIT; i++) {
-      const attempt = await request(app)
-        .post('/auth/register')
-        .set('X-Forwarded-For', ip)
-        .send({ name: 'x', username: 'ab', email: 'invalido', password: '1', confirmPassword: '1' });
+      const attempt = await request(app).post('/auth/register').set('X-Forwarded-For', ip).send({
+        name: 'x',
+        username: 'ab',
+        email: 'invalido',
+        password: '1',
+        confirmPassword: '1',
+      });
 
       expect(attempt.status).toBe(400);
     }
@@ -138,19 +141,28 @@ describe('POST /auth/register está protegido de criação em massa (SEC-01)', (
   it('cadastro BEM-SUCEDIDO também gasta cota — senão a fazenda de contas passa livre', async () => {
     const ip = '203.0.113.31';
 
-    const criado = await request(app).post('/auth/register').set('X-Forwarded-For', ip).send(validRegisterBody());
+    const criado = await request(app)
+      .post('/auth/register')
+      .set('X-Forwarded-For', ip)
+      .send(validRegisterBody());
     expect(criado.status).toBe(201);
 
     // Se o sucesso não contasse, sobrariam REGISTER_LIMIT tentativas aqui e a última
     // não seria bloqueada.
     for (let i = 1; i < REGISTER_LIMIT; i++) {
-      await request(app)
-        .post('/auth/register')
-        .set('X-Forwarded-For', ip)
-        .send({ name: 'x', username: 'ab', email: 'invalido', password: '1', confirmPassword: '1' });
+      await request(app).post('/auth/register').set('X-Forwarded-For', ip).send({
+        name: 'x',
+        username: 'ab',
+        email: 'invalido',
+        password: '1',
+        confirmPassword: '1',
+      });
     }
 
-    const blocked = await request(app).post('/auth/register').set('X-Forwarded-For', ip).send(validRegisterBody());
+    const blocked = await request(app)
+      .post('/auth/register')
+      .set('X-Forwarded-For', ip)
+      .send(validRegisterBody());
     expect(blocked.status).toBe(429);
   });
 });

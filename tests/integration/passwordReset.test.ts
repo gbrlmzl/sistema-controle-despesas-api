@@ -2,10 +2,13 @@ import { jest } from '@jest/globals';
 import request from 'supertest';
 import app from '../../src/app.js';
 import prisma from '../../src/config/prisma.js';
-import { REFRESH_COOKIE_NAME } from '../../src/middlewares/auth.js';
-import { setSendEmailForTests } from '../../src/lib/mailer.js';
-import { flushPendingEmails, PASSWORD_RESET_REQUESTED_MESSAGE } from '../../src/services/auth/passwordResetService.js';
 import type { OutgoingEmail, SendEmail } from '../../src/lib/mailer.js';
+import { setSendEmailForTests } from '../../src/lib/mailer.js';
+import { REFRESH_COOKIE_NAME } from '../../src/middlewares/auth.js';
+import {
+  flushPendingEmails,
+  PASSWORD_RESET_REQUESTED_MESSAGE,
+} from '../../src/services/auth/passwordResetService.js';
 
 // Nenhum email real sai durante esta suíte (checklist de aceite do plano): o espião
 // abaixo substitui o remetente SMTP de verdade por um jest.fn() antes de qualquer
@@ -173,14 +176,18 @@ describe('Fluxo completo de redefinição', () => {
     await forgotPassword(user.email);
     const segundoToken = extractToken(emailSpy.mock.calls[1]![0]);
 
-    const respostaPrimeiro = await request(app)
-      .post('/auth/reset-password')
-      .send({ token: primeiroToken, newPassword: 'senhaNovaForte1', confirmNewPassword: 'senhaNovaForte1' });
+    const respostaPrimeiro = await request(app).post('/auth/reset-password').send({
+      token: primeiroToken,
+      newPassword: 'senhaNovaForte1',
+      confirmNewPassword: 'senhaNovaForte1',
+    });
     expect(respostaPrimeiro.status).toBe(400);
 
-    const respostaSegundo = await request(app)
-      .post('/auth/reset-password')
-      .send({ token: segundoToken, newPassword: 'senhaNovaForte1', confirmNewPassword: 'senhaNovaForte1' });
+    const respostaSegundo = await request(app).post('/auth/reset-password').send({
+      token: segundoToken,
+      newPassword: 'senhaNovaForte1',
+      confirmNewPassword: 'senhaNovaForte1',
+    });
     expect(respostaSegundo.status).toBe(200);
   });
 
@@ -191,7 +198,9 @@ describe('Fluxo completo de redefinição', () => {
       .post('/auth/login')
       .send({ username: user.username, password: user.password });
     expect(outroDispositivo.status).toBe(200);
-    const refreshOutroDispositivo = cookieValue(getSetCookie(outroDispositivo, REFRESH_COOKIE_NAME)!);
+    const refreshOutroDispositivo = cookieValue(
+      getSetCookie(outroDispositivo, REFRESH_COOKIE_NAME)!,
+    );
 
     await forgotPassword(user.email);
     const token = extractToken(emailSpy.mock.calls[0]![0]);
@@ -215,7 +224,9 @@ describe('Fluxo completo de redefinição', () => {
       .send({ token, newPassword: 'senhaNovaForte1', confirmNewPassword: 'senhaNovaForte1' });
 
     const raw = (response.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
-    expect(raw.some((c) => c.startsWith('JWT=') || c.startsWith(`${REFRESH_COOKIE_NAME}=`))).toBe(false);
+    expect(raw.some((c) => c.startsWith('JWT=') || c.startsWith(`${REFRESH_COOKIE_NAME}=`))).toBe(
+      false,
+    );
   });
 });
 

@@ -1,4 +1,7 @@
-import { passwordResetEmail, passwordResetGoogleAccountEmail } from '../../src/lib/emailTemplates.js';
+import {
+  passwordResetEmail,
+  passwordResetGoogleAccountEmail,
+} from '../../src/lib/emailTemplates.js';
 
 describe('passwordResetEmail', () => {
   const resetUrl = 'https://exemplo.com/change-password?token=abc123';

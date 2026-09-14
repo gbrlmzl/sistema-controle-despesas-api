@@ -5,12 +5,14 @@
 //
 //   npm run storage:test
 
-import { storage, putTestObject } from '../lib/storage.js';
 import { storageEnabled } from '../config/env.js';
+import { putTestObject, storage } from '../lib/storage.js';
 import { logError } from '../utils/logger.js';
 
 if (!storageEnabled) {
-  console.error('Storage não configurado — preencha S3_REGION e S3_BUCKET no .env antes de testar.');
+  console.error(
+    'Storage não configurado — preencha S3_REGION e S3_BUCKET no .env antes de testar.',
+  );
   process.exit(1);
 }
 

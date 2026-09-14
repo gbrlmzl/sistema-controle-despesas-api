@@ -34,7 +34,9 @@ export interface ReceiptPurgeResult {
 // comprovantes órfãos continuam sendo tentados. Um objeto que já não existe no
 // bucket (DeleteObject é idempotente) conta como sucesso, do mesmo jeito que um
 // registro já removido.
-export async function purgeOrphanReceipts(deps: ReceiptPurgeDependencies): Promise<ReceiptPurgeResult> {
+export async function purgeOrphanReceipts(
+  deps: ReceiptPurgeDependencies,
+): Promise<ReceiptPurgeResult> {
   const olderThanHours = deps.olderThanHours ?? 24;
   const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
 

@@ -33,7 +33,9 @@ export async function runTokenPurge(deps: TokenPurgeDependencies): Promise<numbe
 
   try {
     const removed = await deps.purgePasswordResetTokens();
-    deps.log(`Limpeza de tokens de redefinição de senha concluída: ${removed} linha(s) removida(s).`);
+    deps.log(
+      `Limpeza de tokens de redefinição de senha concluída: ${removed} linha(s) removida(s).`,
+    );
   } catch (err) {
     deps.logError(err, 'purgeTokens/passwordResetTokens');
     exitCode = 1;

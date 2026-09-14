@@ -3,10 +3,10 @@
 //
 //   npm run mail:test -- seu.email@gmail.com
 
-import { sendEmail } from '../lib/mailer.js';
-import { passwordResetEmail } from '../lib/emailTemplates.js';
-import { logError } from '../utils/logger.js';
 import { mailEnabled } from '../config/env.js';
+import { passwordResetEmail } from '../lib/emailTemplates.js';
+import { sendEmail } from '../lib/mailer.js';
+import { logError } from '../utils/logger.js';
 
 const to = process.argv[2];
 

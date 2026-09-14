@@ -96,7 +96,9 @@ describe('rate limiting (SEC-01)', () => {
     await request(limited).post('/recurso').set('X-Forwarded-For', '203.0.113.10');
     await request(limited).post('/recurso').set('X-Forwarded-For', '203.0.113.10');
 
-    const primeiroIpBloqueado = await request(limited).post('/recurso').set('X-Forwarded-For', '203.0.113.10');
+    const primeiroIpBloqueado = await request(limited)
+      .post('/recurso')
+      .set('X-Forwarded-For', '203.0.113.10');
     expect(primeiroIpBloqueado.status).toBe(429);
 
     // Outro cliente, atrás do mesmo proxy, começa com a cota cheia.

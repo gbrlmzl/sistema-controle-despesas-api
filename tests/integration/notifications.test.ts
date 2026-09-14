@@ -37,7 +37,9 @@ async function registerUser(name = 'Usuário de Teste'): Promise<RegisteredUser>
 }
 
 afterAll(async () => {
-  await prisma.residence.deleteMany({ where: { owner: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } } });
+  await prisma.residence.deleteMany({
+    where: { owner: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } },
+  });
   await prisma.user.deleteMany({ where: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } });
   await prisma.$disconnect();
 });
@@ -113,7 +115,8 @@ describe('GET /notifications e PATCH /notifications', () => {
   });
 
   it('marca todas como lidas com { all: true }', async () => {
-    const code = (await owner.agent.post('/residences').send({ name: 'Casa Notificações 2' })).body.residence.code;
+    const code = (await owner.agent.post('/residences').send({ name: 'Casa Notificações 2' })).body
+      .residence.code;
     await member.agent.post('/residences/join-requests').send({ code });
 
     const before = await owner.agent.get('/notifications');
@@ -125,7 +128,8 @@ describe('GET /notifications e PATCH /notifications', () => {
   });
 
   it('não marca como lida notificação de outro usuário', async () => {
-    const code = (await owner.agent.post('/residences').send({ name: 'Casa Notificações 3' })).body.residence.code;
+    const code = (await owner.agent.post('/residences').send({ name: 'Casa Notificações 3' })).body
+      .residence.code;
     await member.agent.post('/residences/join-requests').send({ code });
 
     const ownerNotifications = await owner.agent.get('/notifications');
@@ -135,7 +139,9 @@ describe('GET /notifications e PATCH /notifications', () => {
 
     await member.agent.patch('/notifications').send({ ids: [unreadNotificationId] });
 
-    const stillUnread = await prisma.notification.findUnique({ where: { id: unreadNotificationId } });
+    const stillUnread = await prisma.notification.findUnique({
+      where: { id: unreadNotificationId },
+    });
     expect(stillUnread?.readAt).toBeNull();
   });
 });

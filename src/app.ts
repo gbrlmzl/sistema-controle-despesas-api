@@ -9,15 +9,15 @@ import passport from './config/passport.js';
 import prisma from './config/prisma.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { globalLimiter } from './middlewares/rateLimit.js';
-import { logError } from './utils/logger.js';
-import { createReadinessHandler } from './utils/readiness.js';
 import authRoutes from './routes/auth/authRoutes.js';
-import residencesRoutes from './routes/residences/residencesRoutes.js';
 import expensesRoutes from './routes/expenses/expensesRoutes.js';
+import notificationsRoutes from './routes/notifications/notificationsRoutes.js';
 import settlementsRoutes from './routes/payments/settlementsRoutes.js';
 import reportsRoutes from './routes/reports/reportsRoutes.js';
-import notificationsRoutes from './routes/notifications/notificationsRoutes.js';
+import residencesRoutes from './routes/residences/residencesRoutes.js';
 import usersRoutes from './routes/users/usersRoutes.js';
+import { logError } from './utils/logger.js';
+import { createReadinessHandler } from './utils/readiness.js';
 
 const app = express();
 

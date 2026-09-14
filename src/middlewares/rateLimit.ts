@@ -142,7 +142,11 @@ export const refreshLimiter = buildLimiter('refresh', {
 // (D-03, anti-enumeração): toda requisição é "bem-sucedida" do ponto de vista do
 // rate-limiter, então essa opção desarmaria o limitador por completo, em silêncio —
 // não "padronize" com o loginLimiter.
-export const FORGOT_PASSWORD_LIMIT = resolveLimit('forgot-password', 5, env.RATE_LIMIT_FORGOT_PASSWORD);
+export const FORGOT_PASSWORD_LIMIT = resolveLimit(
+  'forgot-password',
+  5,
+  env.RATE_LIMIT_FORGOT_PASSWORD,
+);
 
 export const forgotPasswordLimiter = buildLimiter('forgot-password', {
   windowMs: 60 * 60 * 1000,
@@ -152,7 +156,11 @@ export const forgotPasswordLimiter = buildLimiter('forgot-password', {
 
 // Fecha a porta pra tentativa de adivinhar token (32 bytes, mas defesa em
 // profundidade) e limita o gasto de bcrypt.hash por IP.
-export const RESET_PASSWORD_LIMIT = resolveLimit('reset-password', 10, env.RATE_LIMIT_RESET_PASSWORD);
+export const RESET_PASSWORD_LIMIT = resolveLimit(
+  'reset-password',
+  10,
+  env.RATE_LIMIT_RESET_PASSWORD,
+);
 
 export const resetPasswordLimiter = buildLimiter('reset-password', {
   windowMs: 60 * 60 * 1000,

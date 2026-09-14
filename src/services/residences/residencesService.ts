@@ -1,9 +1,9 @@
 import { randomInt } from 'node:crypto';
 import prisma from '../../config/prisma.js';
-import { AppError } from '../../utils/AppError.js';
-import { createNotification } from '../notifications/notificationsService.js';
-import { getOpenCompetency } from '../expenses/expensesService.js';
 import { normalizeUsername } from '../../lib/username.js';
+import { AppError } from '../../utils/AppError.js';
+import { getOpenCompetency } from '../expenses/expensesService.js';
+import { createNotification } from '../notifications/notificationsService.js';
 
 // --- Código público da residência ---
 
@@ -258,7 +258,10 @@ export async function listSentJoinRequests(userId: number) {
 
 //RN-013 -> devolve a data em que o usuário poderá solicitar entrada novamente, ou
 //null quando não há recusa recente bloqueando uma nova tentativa.
-export async function recentDeclineBlockedUntil(residenceId: number, userId: number): Promise<Date | null> {
+export async function recentDeclineBlockedUntil(
+  residenceId: number,
+  userId: number,
+): Promise<Date | null> {
   const cutoff = new Date(Date.now() - DECLINE_COOLDOWN_HOURS * 60 * 60 * 1000);
 
   const recentDecline = await prisma.joinRequest.findFirst({
@@ -341,7 +344,10 @@ export async function requestToJoinResidence(userId: number, requesterName: stri
   //FEAT-020: bloqueia antes de consultar, para que o bloqueio não dependa do
   //resultado da busca e não vire um canal de informação sobre códigos válidos.
   if (await userIsBlockedFromJoining(userId)) {
-    throw new AppError(429, 'Muitas tentativas seguidas. Aguarde alguns minutos antes de tentar de novo.');
+    throw new AppError(
+      429,
+      'Muitas tentativas seguidas. Aguarde alguns minutos antes de tentar de novo.',
+    );
   }
 
   const residence = await prisma.residence.findUnique({
@@ -451,7 +457,10 @@ export async function respondToInvite(userId: number, inviteId: number, accept: 
 
   if (!accept) {
     //CA-3: recusar não cria vínculo nenhum
-    await prisma.invite.update({ where: { id: invite.id }, data: { status: 'DECLINED', respondedAt: new Date() } });
+    await prisma.invite.update({
+      where: { id: invite.id },
+      data: { status: 'DECLINED', respondedAt: new Date() },
+    });
     return { residenceName: invite.residence.name, joined: false };
   }
 
@@ -459,7 +468,10 @@ export async function respondToInvite(userId: number, inviteId: number, accept: 
   //convidar. O vínculo e a baixa do convite acontecem na mesma transação.
   await prisma.$transaction([
     prisma.membership.create({ data: { userId, residenceId: invite.residenceId, role: 'MEMBER' } }),
-    prisma.invite.update({ where: { id: invite.id }, data: { status: 'ACCEPTED', respondedAt: new Date() } }),
+    prisma.invite.update({
+      where: { id: invite.id },
+      data: { status: 'ACCEPTED', respondedAt: new Date() },
+    }),
   ]);
 
   return { residenceName: invite.residence.name, joined: true };
@@ -485,7 +497,10 @@ export async function updateResidence(code: string, userId: number, input: Resid
   }
 
   if (input.archived !== undefined && input.archived === context.isArchived) {
-    throw new AppError(409, input.archived ? 'Esta residência já está arquivada.' : 'Esta residência não está arquivada.');
+    throw new AppError(
+      409,
+      input.archived ? 'Esta residência já está arquivada.' : 'Esta residência não está arquivada.',
+    );
   }
 
   const data: { name?: string; archivedAt?: Date | null } = {};
@@ -515,7 +530,10 @@ export async function regenerateResidenceCode(code: string, userId: number) {
   }
 
   if (context.isArchived) {
-    throw new AppError(409, 'Esta residência está arquivada. Desarquive-a para gerar um novo código.');
+    throw new AppError(
+      409,
+      'Esta residência está arquivada. Desarquive-a para gerar um novo código.',
+    );
   }
 
   const newCode = await generateAvailableCode();
@@ -573,7 +591,10 @@ export async function removeMember(code: string, requesterId: number, targetUser
   }
 
   if (context.isArchived) {
-    throw new AppError(409, 'Esta residência está arquivada. Desarquive-a para gerenciar os membros.');
+    throw new AppError(
+      409,
+      'Esta residência está arquivada. Desarquive-a para gerenciar os membros.',
+    );
   }
 
   if (targetUserId === requesterId) {
@@ -618,7 +639,11 @@ export async function removeMember(code: string, requesterId: number, targetUser
 //As três alterações (dono da residência + papel dos dois membros) acontecem na
 //mesma transação para que a residência nunca fique com zero ou dois owners (RN-017
 //e CA-5).
-export async function transferOwnership(code: string, currentOwnerId: number, newOwnerUserId: number) {
+export async function transferOwnership(
+  code: string,
+  currentOwnerId: number,
+  newOwnerUserId: number,
+) {
   const context = await loadUserResidenceContext(code, currentOwnerId);
 
   if (!context.isOwner) {
@@ -626,7 +651,10 @@ export async function transferOwnership(code: string, currentOwnerId: number, ne
   }
 
   if (context.isArchived) {
-    throw new AppError(409, 'Esta residência está arquivada. Desarquive-a para transferir a propriedade.');
+    throw new AppError(
+      409,
+      'Esta residência está arquivada. Desarquive-a para transferir a propriedade.',
+    );
   }
 
   if (newOwnerUserId === currentOwnerId) {
@@ -644,7 +672,10 @@ export async function transferOwnership(code: string, currentOwnerId: number, ne
   }
 
   await prisma.$transaction([
-    prisma.residence.update({ where: { id: context.residence.id }, data: { ownerId: newOwnerUserId } }),
+    prisma.residence.update({
+      where: { id: context.residence.id },
+      data: { ownerId: newOwnerUserId },
+    }),
     prisma.membership.update({ where: { id: newOwnerMembership.id }, data: { role: 'OWNER' } }),
     prisma.membership.update({ where: { id: context.membership.id }, data: { role: 'MEMBER' } }),
   ]);
@@ -681,7 +712,10 @@ export async function respondToJoinRequest(ownerId: number, requestId: number, a
   }
 
   if (request.residence.archivedAt !== null) {
-    throw new AppError(409, 'Esta residência está arquivada. Desarquive-a para responder solicitações.');
+    throw new AppError(
+      409,
+      'Esta residência está arquivada. Desarquive-a para responder solicitações.',
+    );
   }
 
   if (!accept) {
@@ -706,8 +740,13 @@ export async function respondToJoinRequest(ownerId: number, requestId: number, a
 
   //CA-2: aceitar cria o vínculo e dá baixa na solicitação, na mesma transação
   await prisma.$transaction([
-    prisma.membership.create({ data: { userId: request.requesterId, residenceId: request.residence.id, role: 'MEMBER' } }),
-    prisma.joinRequest.update({ where: { id: request.id }, data: { status: 'ACCEPTED', respondedAt: new Date() } }),
+    prisma.membership.create({
+      data: { userId: request.requesterId, residenceId: request.residence.id, role: 'MEMBER' },
+    }),
+    prisma.joinRequest.update({
+      where: { id: request.id },
+      data: { status: 'ACCEPTED', respondedAt: new Date() },
+    }),
   ]);
 
   await createNotification({
@@ -739,7 +778,10 @@ export async function cancelInvite(ownerId: number, inviteId: number) {
     throw new AppError(404, 'Este convite não está mais pendente');
   }
 
-  await prisma.invite.update({ where: { id: invite.id }, data: { status: 'CANCELLED', respondedAt: new Date() } });
+  await prisma.invite.update({
+    where: { id: invite.id },
+    data: { status: 'CANCELLED', respondedAt: new Date() },
+  });
 
   return { invitedUserName: invite.invitedUser.name };
 }
@@ -764,7 +806,10 @@ export async function inviteUser(code: string, ownerId: number, input: InviteUse
   const username = normalizeUsername(input.username);
 
   //CA-4: nome de usuário precisa existir
-  const invitedUser = await prisma.user.findUnique({ select: { id: true, name: true }, where: { username } });
+  const invitedUser = await prisma.user.findUnique({
+    select: { id: true, name: true },
+    where: { username },
+  });
   if (!invitedUser) {
     throw new AppError(404, 'Nenhum usuário encontrado com esse nome de usuário');
   }

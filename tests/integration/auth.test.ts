@@ -1,5 +1,5 @@
-import cookieParser from 'cookie-parser';
 import { createHash } from 'node:crypto';
+import cookieParser from 'cookie-parser';
 import express from 'express';
 import request from 'supertest';
 import app from '../../src/app.js';
@@ -95,7 +95,9 @@ describe('POST /auth/login', () => {
     const body = validRegisterBody();
     await request(app).post('/auth/register').send(body);
 
-    const response = await request(app).post('/auth/login').send({ username: body.username, password: body.password });
+    const response = await request(app)
+      .post('/auth/login')
+      .send({ username: body.username, password: body.password });
 
     expect(response.status).toBe(200);
     expect(response.body.user.username).toBe(body.username);
@@ -107,7 +109,9 @@ describe('POST /auth/login', () => {
     const body = validRegisterBody();
     await request(app).post('/auth/register').send(body);
 
-    const response = await request(app).post('/auth/login').send({ username: body.username, password: 'senhaErrada1' });
+    const response = await request(app)
+      .post('/auth/login')
+      .send({ username: body.username, password: 'senhaErrada1' });
 
     expect(response.status).toBe(401);
   });
@@ -150,7 +154,9 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
   // token imediatamente mede a primeira coisa, não a segunda — por isso os casos de roubo
   // abaixo envelhecem a revogação antes de reapresentar.
   it('aceita o token recém-rotacionado dentro da janela de graça, sem derrubar a família', async () => {
-    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${firstRefreshToken}`]);
+    const response = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${firstRefreshToken}`]);
 
     expect(response.status).toBe(200);
     const cookie = getSetCookie(response, REFRESH_COOKIE_NAME);
@@ -159,7 +165,9 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
   });
 
   it('a sessão sobrevive à concorrência — o token da rotação legítima continua valendo', async () => {
-    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${secondRefreshToken}`]);
+    const response = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${secondRefreshToken}`]);
 
     expect(response.status).toBe(200);
     secondRefreshToken = cookieValue(getSetCookie(response, REFRESH_COOKIE_NAME)!);
@@ -168,13 +176,17 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
   it('rejeita com 401 o token rotacionado há mais tempo que a janela de graça (reuso)', async () => {
     await envelhecerRevogacao(firstRefreshToken);
 
-    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${firstRefreshToken}`]);
+    const response = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${firstRefreshToken}`]);
 
     expect(response.status).toBe(401);
   });
 
   it('reuso detectado revoga a família inteira — o token mais novo também para de funcionar', async () => {
-    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${secondRefreshToken}`]);
+    const response = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${secondRefreshToken}`]);
 
     expect(response.status).toBe(401);
   });
@@ -183,13 +195,17 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
     const registerResponse = await request(app).post('/auth/register').send(validRegisterBody());
     const rawToken = cookieValue(getSetCookie(registerResponse, REFRESH_COOKIE_NAME)!);
 
-    await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
+    await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
     const revogadoEm = await revokedAtDe(rawToken);
     expect(revogadoEm).not.toBeNull();
 
     // Se cada reapresentação reescrevesse revokedAt, o relógio da janela reiniciaria a
     // cada tentativa e um token roubado valeria pra sempre enquanto fosse usado a cada 10s.
-    await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
+    await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
 
     expect(await revokedAtDe(rawToken)).toEqual(revogadoEm);
   });
@@ -201,7 +217,9 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
   });
 
   it('rejeita valor de cookie inválido/aleatório', async () => {
-    const response = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=valor-que-nunca-existiu`]);
+    const response = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=valor-que-nunca-existiu`]);
 
     expect(response.status).toBe(401);
   });
@@ -212,7 +230,10 @@ describe('POST /auth/refresh (rotação + detecção de reuso)', () => {
     const rawToken = cookieValue(refreshCookie);
 
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-    await prisma.refreshToken.update({ where: { tokenHash }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    await prisma.refreshToken.update({
+      where: { tokenHash },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
 
     const response = await request(app).post('/auth/refresh').set('Cookie', [refreshCookie]);
 
@@ -226,7 +247,9 @@ describe('POST /auth/logout', () => {
 
     expect(response.status).toBe(200);
     expect(getSetCookie(response, 'JWT')).toMatch(/^JWT=;/);
-    expect(getSetCookie(response, REFRESH_COOKIE_NAME)).toMatch(new RegExp(`^${REFRESH_COOKIE_NAME}=;`));
+    expect(getSetCookie(response, REFRESH_COOKIE_NAME)).toMatch(
+      new RegExp(`^${REFRESH_COOKIE_NAME}=;`),
+    );
   });
 
   it('revoga o refresh token — não pode ser reaproveitado depois do logout', async () => {
@@ -237,7 +260,9 @@ describe('POST /auth/logout', () => {
     const logoutResponse = await request(app).post('/auth/logout').set('Cookie', [refreshCookie]);
     expect(logoutResponse.status).toBe(200);
 
-    const refreshAttempt = await request(app).post('/auth/refresh').set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
+    const refreshAttempt = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${rawToken}`]);
     expect(refreshAttempt.status).toBe(401);
   });
 });
@@ -256,7 +281,9 @@ describe('requireAuth (middleware)', () => {
   });
 
   it('responde 401 com token inválido', async () => {
-    const response = await request(protectedApp).get('/protected').set('Cookie', ['JWT=lixo-invalido']);
+    const response = await request(protectedApp)
+      .get('/protected')
+      .set('Cookie', ['JWT=lixo-invalido']);
     expect(response.status).toBe(401);
   });
 
