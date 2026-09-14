@@ -24,6 +24,7 @@ jobs:
       - name: Rodar linter (Biome)
         run: npm run lint:ci
   test:
+    name: Testes (unitário + integração)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -74,7 +75,7 @@ jobs:
 
   build:
     name: Build da imagem (docker compose --profile prod, ${{ matrix.platform }})
-    needs: test
+    needs: [lint, test]
     runs-on: ubuntu-latest
     strategy:
       matrix:
