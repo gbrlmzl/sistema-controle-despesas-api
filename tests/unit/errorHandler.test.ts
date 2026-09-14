@@ -118,7 +118,9 @@ describe('errorHandler em produção (SEC-04)', () => {
 describe('errorHandler com falha de corpo do cliente (SEC-04/SEC-11)', () => {
   it('corpo acima do limite vira 413, não 500', () => {
     const res = mockResponse();
-    const tooLarge = Object.assign(new Error('request entity too large'), { type: 'entity.too.large' });
+    const tooLarge = Object.assign(new Error('request entity too large'), {
+      type: 'entity.too.large',
+    });
 
     errorHandler(tooLarge, mockRequest(), res, jest.fn());
 

@@ -13,7 +13,10 @@ export function notFoundHandler(req: Request, res: Response): void {
 // abaixo — respondendo o status errado e, antes do SEC-04, vazando o texto cru do
 // parser ("Unexpected token } in JSON at position 42").
 const CLIENT_BODY_FAILURES: Record<string, { statusCode: number; message: string }> = {
-  'entity.too.large': { statusCode: 413, message: 'Corpo da requisição excede o tamanho máximo permitido.' },
+  'entity.too.large': {
+    statusCode: 413,
+    message: 'Corpo da requisição excede o tamanho máximo permitido.',
+  },
   'entity.parse.failed': { statusCode: 400, message: 'Corpo da requisição não é um JSON válido.' },
 };
 

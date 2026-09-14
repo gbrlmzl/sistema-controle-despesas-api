@@ -1,15 +1,15 @@
-import bcrypt from 'bcrypt';
 import { createHash } from 'node:crypto';
 import { jest } from '@jest/globals';
+import bcrypt from 'bcrypt';
 import prisma from '../../src/config/prisma.js';
+import type { OutgoingEmail, SendEmail } from '../../src/lib/mailer.js';
+import { issueRefreshToken } from '../../src/services/auth/authService.js';
 import {
   PASSWORD_RESET_MAX_PER_HOUR,
   requestPasswordReset,
   resetPassword,
   verifyPasswordResetToken,
 } from '../../src/services/auth/passwordResetService.js';
-import { issueRefreshToken } from '../../src/services/auth/authService.js';
-import type { OutgoingEmail, SendEmail } from '../../src/lib/mailer.js';
 
 // Estes testes chamam o service direto (sem HTTP), mas ainda tocam o banco de teste
 // de verdade: não há injeção de dependência para o Prisma neste projeto (só para
@@ -144,7 +144,9 @@ describe('resetPassword', () => {
   it('redefine a senha e chama revokeAllUserTokens', async () => {
     const user = await createUser('senhaAntiga1');
     await issueRefreshToken(user.id);
-    expect(await prisma.refreshToken.count({ where: { userId: user.id, revokedAt: null } })).toBe(1);
+    expect(await prisma.refreshToken.count({ where: { userId: user.id, revokedAt: null } })).toBe(
+      1,
+    );
 
     const sendEmail = fakeSendEmail();
     await requestPasswordReset(user.email, { sendEmail });
@@ -156,6 +158,8 @@ describe('resetPassword', () => {
     await expect(bcrypt.compare('senhaNovaForte1', atualizado.password!)).resolves.toBe(true);
     await expect(bcrypt.compare('senhaAntiga1', atualizado.password!)).resolves.toBe(false);
 
-    expect(await prisma.refreshToken.count({ where: { userId: user.id, revokedAt: null } })).toBe(0);
+    expect(await prisma.refreshToken.count({ where: { userId: user.id, revokedAt: null } })).toBe(
+      0,
+    );
   });
 });

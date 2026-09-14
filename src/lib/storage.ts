@@ -5,15 +5,15 @@
 // jeito que googleAuthEnabled e mailEnabled já garantem.
 
 import {
-  S3Client,
-  PutObjectCommand,
-  HeadObjectCommand,
-  GetObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
   type HeadObjectCommandOutput,
+  PutObjectCommand,
+  S3Client,
 } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env, storageEnabled } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 
@@ -87,7 +87,9 @@ export function contentDisposition(disposition: 'inline' | 'attachment', fileNam
 // createUploadTicket), mas o teto de tamanho só existe se for declarado aqui — é a
 // única forma de o S3 recusar sozinho um arquivo grande demais. Pura e exportada pelo
 // mesmo motivo de contentDisposition acima.
-export function uploadConditions(maxSizeInBytes: number): Array<['content-length-range', number, number]> {
+export function uploadConditions(
+  maxSizeInBytes: number,
+): Array<['content-length-range', number, number]> {
   return [['content-length-range', 1, maxSizeInBytes]];
 }
 
@@ -128,7 +130,8 @@ function createS3Storage(): StoragePort {
         // AccessDenied, não 404 NoSuchKey. Os dois significam "não encontrado" aqui —
         // sem tratar o 403 também, o fluxo de confirmação quebra para todo objeto
         // inexistente, não só para os que realmente faltam permissão.
-        const statusCode = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+        const statusCode = (err as { $metadata?: { httpStatusCode?: number } }).$metadata
+          ?.httpStatusCode;
         if (statusCode === 404 || statusCode === 403) return null;
         throw err;
       }
@@ -137,12 +140,17 @@ function createS3Storage(): StoragePort {
     async readFirstBytes(key, length) {
       try {
         const out = await client.send(
-          new GetObjectCommand({ Bucket: env.S3_BUCKET!, Key: key, Range: `bytes=0-${length - 1}` }),
+          new GetObjectCommand({
+            Bucket: env.S3_BUCKET!,
+            Key: key,
+            Range: `bytes=0-${length - 1}`,
+          }),
         );
         if (!out.Body) return null;
         return Buffer.from(await out.Body.transformToByteArray());
       } catch (err) {
-        const statusCode = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+        const statusCode = (err as { $metadata?: { httpStatusCode?: number } }).$metadata
+          ?.httpStatusCode;
         if (statusCode === 404 || statusCode === 403) return null;
         throw err;
       }
@@ -216,5 +224,12 @@ export function setStorageForTests(fake: StoragePort | null): void {
 export async function putTestObject(key: string, body: Buffer, contentType: string): Promise<void> {
   if (!storageEnabled) throw new AppError(503, 'Armazenamento de comprovantes indisponível.');
   const client = createS3Client();
-  await client.send(new PutObjectCommand({ Bucket: env.S3_BUCKET!, Key: key, Body: body, ContentType: contentType }));
+  await client.send(
+    new PutObjectCommand({
+      Bucket: env.S3_BUCKET!,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
 }

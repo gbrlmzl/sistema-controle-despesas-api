@@ -1,7 +1,4 @@
 import { Router } from 'express';
-import { requireAuth } from '../../middlewares/auth.js';
-import { validateBody } from '../../middlewares/validate.js';
-import { expenseSchema, monthClosureSchema } from '../../schemas/despesas.js';
 import {
   closeMonthHandler,
   create,
@@ -13,6 +10,9 @@ import {
   stopRecurrence,
   update,
 } from '../../controllers/expenses/expensesController.js';
+import { requireAuth } from '../../middlewares/auth.js';
+import { validateBody } from '../../middlewares/validate.js';
+import { expenseSchema, monthClosureSchema } from '../../schemas/despesas.js';
 
 const router = Router();
 

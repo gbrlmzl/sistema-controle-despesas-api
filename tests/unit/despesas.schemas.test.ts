@@ -12,29 +12,54 @@ describe('expenseSchema', () => {
   });
 
   it('rejeita nome curto demais', () => {
-    expect(expenseSchema.safeParse({ name: 'A', valueInCents: 100, category: 'OUTROS', isRecurring: false }).success).toBe(
-      false,
-    );
+    expect(
+      expenseSchema.safeParse({
+        name: 'A',
+        valueInCents: 100,
+        category: 'OUTROS',
+        isRecurring: false,
+      }).success,
+    ).toBe(false);
   });
 
   it('rejeita valor zero ou negativo', () => {
     expect(
-      expenseSchema.safeParse({ name: 'Aluguel', valueInCents: 0, category: 'OUTROS', isRecurring: false }).success,
+      expenseSchema.safeParse({
+        name: 'Aluguel',
+        valueInCents: 0,
+        category: 'OUTROS',
+        isRecurring: false,
+      }).success,
     ).toBe(false);
     expect(
-      expenseSchema.safeParse({ name: 'Aluguel', valueInCents: -100, category: 'OUTROS', isRecurring: false }).success,
+      expenseSchema.safeParse({
+        name: 'Aluguel',
+        valueInCents: -100,
+        category: 'OUTROS',
+        isRecurring: false,
+      }).success,
     ).toBe(false);
   });
 
   it('rejeita valor não inteiro (centavos fracionados)', () => {
     expect(
-      expenseSchema.safeParse({ name: 'Aluguel', valueInCents: 100.5, category: 'OUTROS', isRecurring: false }).success,
+      expenseSchema.safeParse({
+        name: 'Aluguel',
+        valueInCents: 100.5,
+        category: 'OUTROS',
+        isRecurring: false,
+      }).success,
     ).toBe(false);
   });
 
   it('rejeita categoria fora do enum', () => {
     expect(
-      expenseSchema.safeParse({ name: 'Aluguel', valueInCents: 100, category: 'VIAGEM', isRecurring: false }).success,
+      expenseSchema.safeParse({
+        name: 'Aluguel',
+        valueInCents: 100,
+        category: 'VIAGEM',
+        isRecurring: false,
+      }).success,
     ).toBe(false);
   });
 });

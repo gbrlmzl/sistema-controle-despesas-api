@@ -18,7 +18,9 @@ describe('updateProfileSchema', () => {
   });
 
   it('aceita nome e avatar juntos', () => {
-    expect(updateProfileSchema.safeParse({ name: 'Novo Nome', avatar: AVATARS[0] }).success).toBe(true);
+    expect(updateProfileSchema.safeParse({ name: 'Novo Nome', avatar: AVATARS[0] }).success).toBe(
+      true,
+    );
   });
 
   it('rejeita corpo vazio (nenhum campo informado)', () => {
@@ -39,14 +41,18 @@ describe('changePasswordSchema', () => {
 
   it('rejeita nova senha curta demais', () => {
     expect(
-      changePasswordSchema.safeParse({ ...valid, newPassword: 'a1', confirmNewPassword: 'a1' }).success,
+      changePasswordSchema.safeParse({ ...valid, newPassword: 'a1', confirmNewPassword: 'a1' })
+        .success,
     ).toBe(false);
   });
 
   it('rejeita nova senha sem número ou símbolo', () => {
     expect(
-      changePasswordSchema.safeParse({ ...valid, newPassword: 'somenteletras', confirmNewPassword: 'somenteletras' })
-        .success,
+      changePasswordSchema.safeParse({
+        ...valid,
+        newPassword: 'somenteletras',
+        confirmNewPassword: 'somenteletras',
+      }).success,
     ).toBe(false);
   });
 

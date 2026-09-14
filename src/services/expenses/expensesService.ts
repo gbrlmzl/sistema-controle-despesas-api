@@ -1,10 +1,10 @@
 import prisma from '../../config/prisma.js';
-import { AppError } from '../../utils/AppError.js';
 import type { ExpenseCategory } from '../../generated/client.js';
-import { loadUserResidenceContext } from '../residences/residencesService.js';
+import { AppError } from '../../utils/AppError.js';
 import { createNotifications } from '../notifications/notificationsService.js';
-import { calculateSplit, simplifyDebts, type DebtPair } from '../reports/splitService.js';
 import { getCompetencySettlementSummary } from '../payments/settlementsService.js';
+import { calculateSplit, type DebtPair, simplifyDebts } from '../reports/splitService.js';
+import { loadUserResidenceContext } from '../residences/residencesService.js';
 
 //D-08 -> valores em centavos viram texto de notificação ("R$ 219,10"). Só usado aqui:
 //o resto da API trabalha em centavos, e formatar é responsabilidade de quem publica o
@@ -29,7 +29,11 @@ export interface Competency {
 //Limite de segurança ao procurar a competência aberta, para nunca iterar sem fim
 const MAX_MONTHS_TO_SEARCH = 36;
 
-export async function monthIsClosed(residenceId: number, month: number, year: number): Promise<boolean> {
+export async function monthIsClosed(
+  residenceId: number,
+  month: number,
+  year: number,
+): Promise<boolean> {
   const closure = await prisma.monthClosure.findUnique({
     select: { id: true },
     where: { residenceId_year_month: { residenceId, year, month } },
@@ -67,7 +71,12 @@ export function getNextCompetency({ month, year }: Competency): Competency {
 
 //Q-1 a Q-4 -> todos os membros veem todas as despesas da competência, agrupadas por
 //autor, com total por membro e total geral.
-export async function listExpensesForCompetency(residenceId: number, month: number, year: number, userId: number) {
+export async function listExpensesForCompetency(
+  residenceId: number,
+  month: number,
+  year: number,
+  userId: number,
+) {
   const [expenses, closure, settlement] = await Promise.all([
     prisma.expense.findMany({
       where: {
@@ -120,7 +129,12 @@ export async function listExpensesForCompetency(residenceId: number, month: numb
     let group = byMember.find((item) => item.userId === expense.createdById);
 
     if (!group) {
-      group = { userId: expense.createdById, name: expense.createdBy.name, totalInCents: 0, expenses: [] };
+      group = {
+        userId: expense.createdById,
+        name: expense.createdBy.name,
+        totalInCents: 0,
+        expenses: [],
+      };
       byMember.push(group);
     }
 
@@ -196,7 +210,12 @@ export async function createExpense(code: string, userId: number, input: Expense
 //Filtro compartilhado pelas ações que só o autor pode alterar (edição, exclusão,
 //parar recorrência). O filtro por createdById garante isso mesmo que alguém chame
 //a rota com o id de um lançamento alheio (Q-5).
-async function loadOwnExpenseOrThrow(residenceId: number, userId: number, expenseId: string, deniedMessage: string) {
+async function loadOwnExpenseOrThrow(
+  residenceId: number,
+  userId: number,
+  expenseId: string,
+  deniedMessage: string,
+) {
   const expense = await prisma.expense.findFirst({
     where: { id: expenseId, residenceId, createdById: userId, deletedAt: null },
     select: { id: true, name: true, month: true, year: true },
@@ -214,7 +233,12 @@ async function loadOwnExpenseOrThrow(residenceId: number, userId: number, expens
   return expense;
 }
 
-export async function editExpense(code: string, userId: number, expenseId: string, input: ExpenseInput) {
+export async function editExpense(
+  code: string,
+  userId: number,
+  expenseId: string,
+  input: ExpenseInput,
+) {
   const context = await loadUserResidenceContext(code, userId);
 
   if (context.isArchived) {
@@ -252,7 +276,11 @@ export async function editExpense(code: string, userId: number, expenseId: strin
 
 //Exclusão lógica: o registro é preservado para auditoria e para não distorcer o
 //histórico já consultado por outros membros.
-export async function deleteExpense(code: string, userId: number, expenseId: string): Promise<void> {
+export async function deleteExpense(
+  code: string,
+  userId: number,
+  expenseId: string,
+): Promise<void> {
   const context = await loadUserResidenceContext(code, userId);
 
   if (context.isArchived) {
@@ -271,7 +299,11 @@ export async function deleteExpense(code: string, userId: number, expenseId: str
 
 //"Parar" não remove o lançamento do mês atual, só impede que ele seja recopiado no
 //próximo fechamento — a despesa continua valendo normalmente até lá.
-export async function stopExpenseRecurrence(code: string, userId: number, expenseId: string): Promise<void> {
+export async function stopExpenseRecurrence(
+  code: string,
+  userId: number,
+  expenseId: string,
+): Promise<void> {
   const context = await loadUserResidenceContext(code, userId);
 
   if (context.isArchived) {
@@ -290,7 +322,12 @@ export async function stopExpenseRecurrence(code: string, userId: number, expens
 
 //Despesas recorrentes do próprio usuário na competência informada — é o que a tela
 //dedicada de gerenciamento (FEAT-025) lista, edita e para de repetir.
-export async function listUserRecurringExpenses(residenceId: number, userId: number, month: number, year: number) {
+export async function listUserRecurringExpenses(
+  residenceId: number,
+  userId: number,
+  month: number,
+  year: number,
+) {
   return prisma.expense.findMany({
     where: { residenceId, createdById: userId, month, year, isRecurring: true, deletedAt: null },
     orderBy: { createdAt: 'desc' },
@@ -300,18 +337,36 @@ export async function listUserRecurringExpenses(residenceId: number, userId: num
 
 //Resolve o contexto (RN-010: só membro) e, quando a competência não vem na
 //requisição, assume a aberta (RN-020) — é o que a rota de consulta expõe.
-export async function getResidenceExpenses(code: string, userId: number, requestedCompetency: Competency | null) {
+export async function getResidenceExpenses(
+  code: string,
+  userId: number,
+  requestedCompetency: Competency | null,
+) {
   const context = await loadUserResidenceContext(code, userId);
   const competency = requestedCompetency ?? (await getOpenCompetency(context.residence.id));
-  const summary = await listExpensesForCompetency(context.residence.id, competency.month, competency.year, userId);
+  const summary = await listExpensesForCompetency(
+    context.residence.id,
+    competency.month,
+    competency.year,
+    userId,
+  );
 
   return { competency, ...summary };
 }
 
-export async function getUserRecurringExpenses(code: string, userId: number, requestedCompetency: Competency | null) {
+export async function getUserRecurringExpenses(
+  code: string,
+  userId: number,
+  requestedCompetency: Competency | null,
+) {
   const context = await loadUserResidenceContext(code, userId);
   const competency = requestedCompetency ?? (await getOpenCompetency(context.residence.id));
-  const expenses = await listUserRecurringExpenses(context.residence.id, userId, competency.month, competency.year);
+  const expenses = await listUserRecurringExpenses(
+    context.residence.id,
+    userId,
+    competency.month,
+    competency.year,
+  );
 
   return { competency, expenses };
 }
@@ -324,7 +379,10 @@ export interface CompetencyStatus extends Competency {
 //despesa não excluída, com o status de fechamento de cada uma. Uma única query
 //agregada (groupBy) sobre Expense, cruzada com os fechamentos da residência —
 //nunca um loop mês a mês.
-export async function getResidenceCompetencies(code: string, userId: number): Promise<CompetencyStatus[]> {
+export async function getResidenceCompetencies(
+  code: string,
+  userId: number,
+): Promise<CompetencyStatus[]> {
   const context = await loadUserResidenceContext(code, userId);
 
   const [competencies, closures] = await Promise.all([
@@ -351,9 +409,19 @@ export async function getResidenceCompetencies(code: string, userId: number): Pr
 
 //FEAT-025 -> ao fechar o mês, as despesas marcadas como recorrentes são recriadas
 //na competência seguinte. É o gatilho possível sem agendador no projeto.
-async function generateRecurringExpenses(residenceId: number, origin: Competency, destination: Competency): Promise<number> {
+async function generateRecurringExpenses(
+  residenceId: number,
+  origin: Competency,
+  destination: Competency,
+): Promise<number> {
   const recurring = await prisma.expense.findMany({
-    where: { residenceId, month: origin.month, year: origin.year, isRecurring: true, deletedAt: null },
+    where: {
+      residenceId,
+      month: origin.month,
+      year: origin.year,
+      isRecurring: true,
+      deletedAt: null,
+    },
     select: { name: true, valueInCents: true, category: true, createdById: true },
   });
 
@@ -439,7 +507,11 @@ export async function closeMonth(code: string, userId: number, requestedPeriod: 
   });
 
   //FEAT-025: as recorrentes do mês fechado renascem na competência seguinte
-  const recurringExpensesGenerated = await generateRecurringExpenses(context.residence.id, competency, next);
+  const recurringExpensesGenerated = await generateRecurringExpenses(
+    context.residence.id,
+    competency,
+    next,
+  );
 
   //MONTH_CLOSED: todos os membros são avisados de que a conta foi fechada
   const members = await prisma.membership.findMany({
@@ -478,7 +550,9 @@ export async function closeMonth(code: string, userId: number, requestedPeriod: 
         type: 'SETTLEMENT_PENDING' as const,
         title: 'Mês fechado',
         message: `Você deve ${joinWithE(
-          payerPairs.map((p) => `${formatCents(p.amountInCents)} a ${namesByUserId.get(p.receiverId)}`),
+          payerPairs.map(
+            (p) => `${formatCents(p.amountInCents)} a ${namesByUserId.get(p.receiverId)}`,
+          ),
         )}.`,
         linkTo: settlementLink,
       })),
@@ -540,7 +614,10 @@ export async function reopenMonth(code: string, userId: number, period: Competen
   });
 
   if (storedReceiptsCount > 0) {
-    throw new AppError(409, 'Este mês já tem comprovante de pagamento anexado e não pode ser reaberto.');
+    throw new AppError(
+      409,
+      'Este mês já tem comprovante de pagamento anexado e não pode ser reaberto.',
+    );
   }
 
   await prisma.monthClosure.delete({ where: { id: latestClosure.id } });

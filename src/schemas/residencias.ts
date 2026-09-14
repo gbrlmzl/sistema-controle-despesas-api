@@ -21,7 +21,10 @@ export const residenceCodeSchema = z
   .regex(/^[A-Z0-9]+$/, 'Código inválido');
 
 export const createJoinRequestSchema = z.object({
-  code: z.preprocess((v) => (typeof v === 'string' ? v.trim().toUpperCase() : v), residenceCodeSchema),
+  code: z.preprocess(
+    (v) => (typeof v === 'string' ? v.trim().toUpperCase() : v),
+    residenceCodeSchema,
+  ),
 });
 
 export const updateResidenceSchema = z

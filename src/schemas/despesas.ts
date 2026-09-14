@@ -1,6 +1,12 @@
 import * as z from 'zod';
 
-export const EXPENSE_CATEGORIES = ['ALIMENTACAO', 'DOMESTICAS', 'ASSINATURAS', 'LAZER', 'OUTROS'] as const;
+export const EXPENSE_CATEGORIES = [
+  'ALIMENTACAO',
+  'DOMESTICAS',
+  'ASSINATURAS',
+  'LAZER',
+  'OUTROS',
+] as const;
 
 //O valor chega em centavos já convertido pelo cliente — diferente do formulário
 //HTML original, aqui não há string digitada (vírgula/ponto) para interpretar.

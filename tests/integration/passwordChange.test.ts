@@ -121,13 +121,17 @@ describe('PATCH /users/me/password derruba as outras sessões (SEC-06)', () => {
     await loginNoOutroDispositivo(user);
     await loginNoOutroDispositivo(user);
 
-    const ativosAntes = await prisma.refreshToken.count({ where: { userId: user.id, revokedAt: null } });
+    const ativosAntes = await prisma.refreshToken.count({
+      where: { userId: user.id, revokedAt: null },
+    });
     expect(ativosAntes).toBe(3);
 
     expect((await trocarSenha(user, 'novaSenhaForte1')).status).toBe(200);
 
     // Sobra exatamente um ativo: o par reemitido pra quem trocou a senha.
-    const ativosDepois = await prisma.refreshToken.count({ where: { userId: user.id, revokedAt: null } });
+    const ativosDepois = await prisma.refreshToken.count({
+      where: { userId: user.id, revokedAt: null },
+    });
     expect(ativosDepois).toBe(1);
   });
 

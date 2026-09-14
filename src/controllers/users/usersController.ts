@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { establishSession } from '../../lib/session.js';
-import { revokeAllUserTokens, type AuthUser } from '../../services/auth/authService.js';
+import { type AuthUser, revokeAllUserTokens } from '../../services/auth/authService.js';
 import {
   changeUserPassword,
   updateProfile as updateProfileService,
@@ -21,7 +21,11 @@ export async function getMe(req: Request, res: Response, next: NextFunction): Pr
   }
 }
 
-export async function updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function updateProfile(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const { name, avatar } = req.body as { name?: string; avatar?: string };
@@ -32,10 +36,17 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
   }
 }
 
-export async function changePassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function changePassword(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
-    const { currentPassword, newPassword } = req.body as { currentPassword: string; newPassword: string };
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword: string;
+      newPassword: string;
+    };
     const updated = await changeUserPassword(user.id, currentPassword, newPassword);
 
     // SEC-06 -> Trocar a senha é o gesto universal de "expulsar o invasor". Sem isto,

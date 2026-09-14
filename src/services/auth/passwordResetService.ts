@@ -1,13 +1,13 @@
-import bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'node:crypto';
+import bcrypt from 'bcrypt';
 import ms from 'ms';
-import prisma from '../../config/prisma.js';
 import { env } from '../../config/env.js';
+import prisma from '../../config/prisma.js';
+import { passwordResetEmail, passwordResetGoogleAccountEmail } from '../../lib/emailTemplates.js';
+import type { OutgoingEmail, SendEmail } from '../../lib/mailer.js';
 import { AppError } from '../../utils/AppError.js';
 import { logError, logSecurityEvent, type SecurityContext } from '../../utils/logger.js';
 import { revokeAllUserTokens } from './authService.js';
-import type { SendEmail, OutgoingEmail } from '../../lib/mailer.js';
-import { passwordResetEmail, passwordResetGoogleAccountEmail } from '../../lib/emailTemplates.js';
 
 const SALT_ROUNDS = 10; // SEC-15 -> decisão fechada do projeto; não mude.
 
@@ -89,7 +89,10 @@ export async function requestPasswordReset(
     // D-11 -> Conta só-Google: nunca cria senha local por este caminho, nunca emite
     // token. Ainda assim conta pro teto (por isso o PasswordResetAttempt aqui).
     await prisma.passwordResetAttempt.create({ data: { userId: user.id } });
-    dispatchEmail(deps.sendEmail, { ...passwordResetGoogleAccountEmail({ name: user.name }), to: user.email });
+    dispatchEmail(deps.sendEmail, {
+      ...passwordResetGoogleAccountEmail({ name: user.name }),
+      to: user.email,
+    });
     return;
   }
 

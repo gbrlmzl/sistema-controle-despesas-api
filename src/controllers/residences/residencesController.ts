@@ -1,6 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthUser } from '../../services/auth/authService.js';
-import { AppError } from '../../utils/AppError.js';
 import {
   cancelInvite,
   cancelJoinRequest,
@@ -8,8 +7,8 @@ import {
   findResidenceForMember,
   inviteUser,
   leaveResidence,
-  listReceivedInvites,
   listPendingJoinRequests,
+  listReceivedInvites,
   listResidencesForUser,
   listSentInvites,
   listSentJoinRequests,
@@ -21,12 +20,17 @@ import {
   transferOwnership,
   updateResidence,
 } from '../../services/residences/residencesService.js';
+import { AppError } from '../../utils/AppError.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;
 }
 
-export async function listResidences(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listResidences(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
 
@@ -54,7 +58,11 @@ export async function create(req: Request, res: Response, next: NextFunction): P
   }
 }
 
-export async function createJoinRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function createJoinRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const result = await requestToJoinResidence(user.id, user.name, req.body.code);
@@ -80,7 +88,11 @@ function codeParam(req: Request): string {
   return value;
 }
 
-export async function removeJoinRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function removeJoinRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const result = await cancelJoinRequest(user.id, parseId(req, 'id'));
@@ -90,7 +102,11 @@ export async function removeJoinRequest(req: Request, res: Response, next: NextF
   }
 }
 
-export async function respondInvite(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function respondInvite(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const accept = req.body.status === 'accepted';
@@ -101,7 +117,11 @@ export async function respondInvite(req: Request, res: Response, next: NextFunct
   }
 }
 
-export async function respondJoinRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function respondJoinRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const accept = req.body.status === 'accepted';
@@ -152,7 +172,11 @@ export async function update(req: Request, res: Response, next: NextFunction): P
   }
 }
 
-export async function regenerateCode(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function regenerateCode(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const result = await regenerateResidenceCode(codeParam(req), user.id);
@@ -172,7 +196,11 @@ export async function leave(req: Request, res: Response, next: NextFunction): Pr
   }
 }
 
-export async function removeMemberHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function removeMemberHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     await removeMember(codeParam(req), user.id, parseId(req, 'userId'));
@@ -182,7 +210,11 @@ export async function removeMemberHandler(req: Request, res: Response, next: Nex
   }
 }
 
-export async function transferOwner(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function transferOwner(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     await transferOwnership(codeParam(req), user.id, req.body.userId);

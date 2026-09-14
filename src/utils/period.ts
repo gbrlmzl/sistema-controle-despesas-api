@@ -1,6 +1,6 @@
 import type { Request } from 'express';
-import { AppError } from './AppError.js';
 import type { Competency } from '../services/expenses/expensesService.js';
+import { AppError } from './AppError.js';
 
 // :period identifica uma competência na URL, no formato AAAA-MM. Usado pelas rotas
 // de fechamento de mês (expensesRoutes) e pelas de acerto (settlementsRoutes) --

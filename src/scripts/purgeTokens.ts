@@ -6,14 +6,14 @@
 // é uma ECS Scheduled Task (EventBridge), no mesmo padrão do serviço `migrate` do
 // docker-compose.yml — uma execução, um código de saída, nenhum processo residente.
 
+import { storageEnabled } from '../config/env.js';
 import prisma from '../config/prisma.js';
+import { storage } from '../lib/storage.js';
 import { purgeExpiredRefreshTokens } from '../services/auth/authService.js';
 import { purgeExpiredPasswordResetTokens } from '../services/auth/passwordResetService.js';
 import { logError } from '../utils/logger.js';
-import { runTokenPurge } from '../utils/tokenPurge.js';
 import { purgeOrphanReceipts } from '../utils/receiptPurge.js';
-import { storage } from '../lib/storage.js';
-import { storageEnabled } from '../config/env.js';
+import { runTokenPurge } from '../utils/tokenPurge.js';
 
 let exitCode = await runTokenPurge({
   purgeRefreshTokens: purgeExpiredRefreshTokens,
@@ -30,7 +30,9 @@ let exitCode = await runTokenPurge({
 if (storageEnabled) {
   try {
     const result = await purgeOrphanReceipts({ prisma, storage });
-    console.log(`Limpeza de comprovantes órfãos concluída: ${result.succeeded} removido(s), ${result.failed} falha(s).`);
+    console.log(
+      `Limpeza de comprovantes órfãos concluída: ${result.succeeded} removido(s), ${result.failed} falha(s).`,
+    );
     if (result.failed > 0) {
       exitCode = 1;
     }

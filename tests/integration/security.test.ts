@@ -42,7 +42,9 @@ describe('cabeçalhos de segurança (SEC-05)', () => {
 
     // preload é praticamente irreversível e vale pro domínio inteiro — fica de fora
     // até todo o ambiente estar estável em HTTPS.
-    expect(response.headers['strict-transport-security']).toBe('max-age=15552000; includeSubDomains');
+    expect(response.headers['strict-transport-security']).toBe(
+      'max-age=15552000; includeSubDomains',
+    );
   });
 
   it('manda nosniff, para o navegador não adivinhar o content-type', async () => {
@@ -136,9 +138,13 @@ describe('CORS', () => {
     // Esta é a falha crítica clássica em API com credentials: ecoar o Origin recebido
     // faz qualquer site conseguir ler resposta autenticada do usuário. O valor tem que
     // ser sempre o front configurado, aconteça o que acontecer.
-    const response = await request(app).get('/notifications').set('Origin', 'https://site-malicioso.example');
+    const response = await request(app)
+      .get('/notifications')
+      .set('Origin', 'https://site-malicioso.example');
 
-    expect(response.headers['access-control-allow-origin']).not.toBe('https://site-malicioso.example');
+    expect(response.headers['access-control-allow-origin']).not.toBe(
+      'https://site-malicioso.example',
+    );
     expect(response.headers['access-control-allow-origin']).toBe(env.FRONTEND_URL);
   });
 
@@ -164,13 +170,15 @@ describe('CORS', () => {
 
 describe('atributos de segurança dos cookies de sessão', () => {
   it('emite JWT e REFRESH como HttpOnly e SameSite=Lax', async () => {
-    const response = await request(app).post('/auth/register').send({
-      name: 'Usuário Cookie',
-      username: `u${uniqueSuffix()}`.slice(0, 20),
-      email: `user-${uniqueSuffix()}@${TEST_EMAIL_DOMAIN}`,
-      password: 'senhaForte1',
-      confirmPassword: 'senhaForte1',
-    });
+    const response = await request(app)
+      .post('/auth/register')
+      .send({
+        name: 'Usuário Cookie',
+        username: `u${uniqueSuffix()}`.slice(0, 20),
+        email: `user-${uniqueSuffix()}@${TEST_EMAIL_DOMAIN}`,
+        password: 'senhaForte1',
+        confirmPassword: 'senhaForte1',
+      });
 
     expect(response.status).toBe(201);
 
@@ -219,13 +227,15 @@ describe('atributos de segurança dos cookies de sessão', () => {
   });
 
   it('o refresh token vale para todo o site, não só para /auth', async () => {
-    const response = await request(app).post('/auth/register').send({
-      name: 'Usuário Path',
-      username: `u${uniqueSuffix()}`.slice(0, 20),
-      email: `user-${uniqueSuffix()}@${TEST_EMAIL_DOMAIN}`,
-      password: 'senhaForte1',
-      confirmPassword: 'senhaForte1',
-    });
+    const response = await request(app)
+      .post('/auth/register')
+      .send({
+        name: 'Usuário Path',
+        username: `u${uniqueSuffix()}`.slice(0, 20),
+        email: `user-${uniqueSuffix()}@${TEST_EMAIL_DOMAIN}`,
+        password: 'senhaForte1',
+        confirmPassword: 'senhaForte1',
+      });
 
     // Path=/ é deliberado: o front chama o refresh por um rewrite same-origin
     // ('/api/auth/refresh'), então um cookie preso a '/auth' nunca seria anexado.

@@ -1,8 +1,8 @@
 import { Router } from 'express';
+import { changePassword, getMe, updateProfile } from '../../controllers/users/usersController.js';
 import { requireAuth } from '../../middlewares/auth.js';
 import { validateBody } from '../../middlewares/validate.js';
 import { changePasswordSchema, updateProfileSchema } from '../../schemas/usuarios.js';
-import { changePassword, getMe, updateProfile } from '../../controllers/users/usersController.js';
 
 const router = Router();
 

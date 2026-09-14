@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
-import { purgeOrphanReceipts, type ReceiptPurgeClient } from '../../src/utils/receiptPurge.js';
 import type { StoragePort } from '../../src/lib/storage.js';
+import { purgeOrphanReceipts, type ReceiptPurgeClient } from '../../src/utils/receiptPurge.js';
 
 // D-26 -> mesmo espírito de tests/unit/tokenPurge.test.ts: dependências injetadas,
 // nenhum banco e nenhuma rede de verdade. O RECORTE do que é considerado órfão
@@ -40,7 +40,10 @@ function fakeStorage(failingKeys: Set<string> = new Set()): Pick<StoragePort, 'd
 
 describe('purgeOrphanReceipts (D-26)', () => {
   it('apaga do storage e do banco cada comprovante órfão encontrado', async () => {
-    const found = [orphan('r1', 'residences/1/2026-08/settlements/s1/r1.jpg'), orphan('r2', 'residences/1/2026-08/settlements/s2/r2.png')];
+    const found = [
+      orphan('r1', 'residences/1/2026-08/settlements/s1/r1.jpg'),
+      orphan('r2', 'residences/1/2026-08/settlements/s2/r2.png'),
+    ];
     const prisma = fakePrisma(found);
     const storage = fakeStorage();
 
@@ -81,7 +84,11 @@ describe('purgeOrphanReceipts (D-26)', () => {
   });
 
   it('uma falha do S3 num item não aborta o lote: os outros continuam sendo tentados e removidos', async () => {
-    const found = [orphan('r1', 'key-que-falha'), orphan('r2', 'key-ok-1'), orphan('r3', 'key-ok-2')];
+    const found = [
+      orphan('r1', 'key-que-falha'),
+      orphan('r2', 'key-ok-1'),
+      orphan('r3', 'key-ok-2'),
+    ];
     const prisma = fakePrisma(found);
     const storage = fakeStorage(new Set(['key-que-falha']));
 

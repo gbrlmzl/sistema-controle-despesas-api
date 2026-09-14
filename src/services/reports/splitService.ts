@@ -38,7 +38,10 @@ export async function calculateSplit(residenceId: number, month: number, year: n
 
   const spentByMember = new Map<number, number>();
   for (const expense of expenses) {
-    spentByMember.set(expense.createdById, (spentByMember.get(expense.createdById) ?? 0) + expense.valueInCents);
+    spentByMember.set(
+      expense.createdById,
+      (spentByMember.get(expense.createdById) ?? 0) + expense.valueInCents,
+    );
   }
 
   const participants = members
@@ -94,7 +97,11 @@ export function simplifyDebts(
   let j = 0;
   while (i < debtors.length && j < creditors.length) {
     const amount = Math.min(debtors[i].remaining, creditors[j].remaining);
-    pairs.push({ payerId: debtors[i].userId, receiverId: creditors[j].userId, amountInCents: amount });
+    pairs.push({
+      payerId: debtors[i].userId,
+      receiverId: creditors[j].userId,
+      amountInCents: amount,
+    });
     debtors[i].remaining -= amount;
     creditors[j].remaining -= amount;
     if (debtors[i].remaining === 0) i++;

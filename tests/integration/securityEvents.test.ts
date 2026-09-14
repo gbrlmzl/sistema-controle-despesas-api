@@ -1,5 +1,5 @@
-import { jest } from '@jest/globals';
 import { createHash } from 'node:crypto';
+import { jest } from '@jest/globals';
 import request from 'supertest';
 import app from '../../src/app.js';
 import { env } from '../../src/config/env.js';
@@ -56,7 +56,8 @@ async function eventosDe(fn: () => Promise<void>): Promise<EventoDeSeguranca[]> 
   return linhas.map((linha) => JSON.parse(linha) as EventoDeSeguranca);
 }
 
-const doTipo = (eventos: EventoDeSeguranca[], nome: string) => eventos.filter((e) => e.event === nome);
+const doTipo = (eventos: EventoDeSeguranca[], nome: string) =>
+  eventos.filter((e) => e.event === nome);
 
 function getSetCookie(response: request.Response, name: string): string | undefined {
   const raw = response.headers['set-cookie'] as unknown as string[] | undefined;
@@ -80,13 +81,15 @@ async function registerUser(): Promise<Registered> {
   const username = `u${uniqueSuffix()}`.slice(0, 20);
   const password = 'senhaForte1';
 
-  const response = await request(app).post('/auth/register').send({
-    name: 'Usuário de Eventos',
-    username,
-    email: `user-${uniqueSuffix()}@${TEST_EMAIL_DOMAIN}`,
-    password,
-    confirmPassword: password,
-  });
+  const response = await request(app)
+    .post('/auth/register')
+    .send({
+      name: 'Usuário de Eventos',
+      username,
+      email: `user-${uniqueSuffix()}@${TEST_EMAIL_DOMAIN}`,
+      password,
+      confirmPassword: password,
+    });
 
   return {
     id: response.body.user.id,

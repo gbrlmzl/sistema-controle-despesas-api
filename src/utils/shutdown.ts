@@ -55,7 +55,9 @@ export function createShutdownHandler(deps: ShutdownDependencies): (signal: stri
 
         deps
           .disconnect()
-          .catch((disconnectError: unknown) => deps.logError(disconnectError, 'shutdown/prisma.$disconnect'))
+          .catch((disconnectError: unknown) =>
+            deps.logError(disconnectError, 'shutdown/prisma.$disconnect'),
+          )
           .finally(() => {
             clearTimeout(forceExit);
             deps.exit(err ? 1 : 0);

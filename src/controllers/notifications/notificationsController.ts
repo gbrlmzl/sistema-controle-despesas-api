@@ -1,7 +1,12 @@
 import type { NextFunction, Request, Response } from 'express';
-import { AppError } from '../../utils/AppError.js';
 import type { AuthUser } from '../../services/auth/authService.js';
-import { countUnread, listNotifications, markAllAsRead, markAsRead } from '../../services/notifications/notificationsService.js';
+import {
+  countUnread,
+  listNotifications,
+  markAllAsRead,
+  markAsRead,
+} from '../../services/notifications/notificationsService.js';
+import { AppError } from '../../utils/AppError.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;

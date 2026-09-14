@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthUser } from '../../services/auth/authService.js';
-import { AppError } from '../../utils/AppError.js';
-import { getResidenceReport, type ReportTab } from '../../services/reports/reportsService.js';
 import type { Competency } from '../../services/expenses/expensesService.js';
+import { getResidenceReport, type ReportTab } from '../../services/reports/reportsService.js';
+import { AppError } from '../../utils/AppError.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;
@@ -26,7 +26,12 @@ function parseCompetencyQuery(req: Request): Competency | null {
   const parsedMonth = Number(month);
   const parsedYear = Number(year);
 
-  if (!Number.isInteger(parsedMonth) || parsedMonth < 1 || parsedMonth > 12 || !Number.isInteger(parsedYear)) {
+  if (
+    !Number.isInteger(parsedMonth) ||
+    parsedMonth < 1 ||
+    parsedMonth > 12 ||
+    !Number.isInteger(parsedYear)
+  ) {
     throw new AppError(400, 'Informe mês e ano válidos.');
   }
 
@@ -41,7 +46,12 @@ function parseTabQuery(req: Request): ReportTab {
 export async function getReport(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = currentUser(req);
-    const report = await getResidenceReport(codeParam(req), user.id, parseCompetencyQuery(req), parseTabQuery(req));
+    const report = await getResidenceReport(
+      codeParam(req),
+      user.id,
+      parseCompetencyQuery(req),
+      parseTabQuery(req),
+    );
     res.status(200).json(report);
   } catch (err) {
     next(err);

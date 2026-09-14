@@ -15,7 +15,13 @@ describe('bcrypt (hash de senha)', () => {
 });
 
 describe('signToken / verifyToken (geração e validação de JWT)', () => {
-  const user = { id: 1, name: 'Teste', username: 'teste', email: 'teste@example.com', profilePic: null };
+  const user = {
+    id: 1,
+    name: 'Teste',
+    username: 'teste',
+    email: 'teste@example.com',
+    profilePic: null,
+  };
 
   it('gera um token que verifyToken consegue validar de volta', () => {
     const token = signToken(user);
@@ -39,9 +45,13 @@ describe('signToken / verifyToken (geração e validação de JWT)', () => {
   });
 
   it('rejeita um token assinado com outro segredo', () => {
-    const forgedToken = jwt.sign({ sub: user.id, email: user.email }, 'segredo-errado-1234567890123456789', {
-      algorithm: 'HS256',
-    });
+    const forgedToken = jwt.sign(
+      { sub: user.id, email: user.email },
+      'segredo-errado-1234567890123456789',
+      {
+        algorithm: 'HS256',
+      },
+    );
 
     expect(() => verifyToken(forgedToken)).toThrow(AppError);
   });
@@ -52,7 +62,13 @@ describe('signToken / verifyToken (geração e validação de JWT)', () => {
 // EXIGI-LOS na verificação. Assinar sem exigir não protege de nada, e é justamente a
 // metade que passa despercebida num refactor.
 describe('issuer e audience do JWT (SEC-12)', () => {
-  const user = { id: 7, name: 'Teste', username: 'teste', email: 'teste@example.com', profilePic: null };
+  const user = {
+    id: 7,
+    name: 'Teste',
+    username: 'teste',
+    email: 'teste@example.com',
+    profilePic: null,
+  };
 
   it('assina o token com issuer e audience desta aplicação', () => {
     const decoded = jwt.decode(signToken(user)) as jwt.JwtPayload;
@@ -64,7 +80,9 @@ describe('issuer e audience do JWT (SEC-12)', () => {
   it('rejeita token válido e bem assinado, mas sem issuer/audience nenhum', () => {
     // Este é o caso que importa: mesmo segredo, mesmo algoritmo, assinatura perfeita —
     // só não foi emitido por esta aplicação. Antes do SEC-12 seria aceito.
-    const semClaims = jwt.sign({ sub: user.id, email: user.email }, env.JWT_SECRET, { algorithm: 'HS256' });
+    const semClaims = jwt.sign({ sub: user.id, email: user.email }, env.JWT_SECRET, {
+      algorithm: 'HS256',
+    });
 
     expect(() => verifyToken(semClaims)).toThrow(AppError);
   });

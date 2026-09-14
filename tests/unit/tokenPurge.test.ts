@@ -12,7 +12,9 @@ import { runTokenPurge, type TokenPurgeDependencies } from '../../src/utils/toke
 function deps(overrides: Partial<TokenPurgeDependencies> = {}) {
   return {
     purgeRefreshTokens: jest.fn(async () => 0) as TokenPurgeDependencies['purgeRefreshTokens'],
-    purgePasswordResetTokens: jest.fn(async () => 0) as TokenPurgeDependencies['purgePasswordResetTokens'],
+    purgePasswordResetTokens: jest.fn(
+      async () => 0,
+    ) as TokenPurgeDependencies['purgePasswordResetTokens'],
     disconnect: jest.fn(async () => undefined) as TokenPurgeDependencies['disconnect'],
     log: jest.fn() as TokenPurgeDependencies['log'],
     logError: jest.fn() as TokenPurgeDependencies['logError'],
@@ -24,7 +26,9 @@ describe('runTokenPurge (SEC-09)', () => {
   it('sai com 0 e loga quantas linhas removeu de cada tabela', async () => {
     const d = deps({
       purgeRefreshTokens: jest.fn(async () => 42) as TokenPurgeDependencies['purgeRefreshTokens'],
-      purgePasswordResetTokens: jest.fn(async () => 7) as TokenPurgeDependencies['purgePasswordResetTokens'],
+      purgePasswordResetTokens: jest.fn(
+        async () => 7,
+      ) as TokenPurgeDependencies['purgePasswordResetTokens'],
     });
 
     await expect(runTokenPurge(d)).resolves.toBe(0);

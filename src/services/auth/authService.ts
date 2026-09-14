@@ -1,13 +1,13 @@
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import ms from 'ms';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import prisma from '../../config/prisma.js';
 import { env } from '../../config/env.js';
-import { AppError } from '../../utils/AppError.js';
-import { normalizeUsername, usernameEmUso, gerarUsernameDisponivel } from '../../lib/username.js';
-import { logSecurityEvent, type SecurityContext } from '../../utils/logger.js';
+import prisma from '../../config/prisma.js';
 import type { User } from '../../generated/client.js';
+import { gerarUsernameDisponivel, normalizeUsername, usernameEmUso } from '../../lib/username.js';
+import { AppError } from '../../utils/AppError.js';
+import { logSecurityEvent, type SecurityContext } from '../../utils/logger.js';
 
 const SALT_ROUNDS = 10;
 
@@ -93,7 +93,12 @@ export async function loginWithCredentials(
   const passwordMatches = await bcrypt.compare(password, user.password);
   if (!passwordMatches) {
     // Nunca a senha tentada — só o identificador de quem foi alvo.
-    logSecurityEvent('login_failed', { ip: context.ip, username, userId: user.id, reason: 'invalid_password' });
+    logSecurityEvent('login_failed', {
+      ip: context.ip,
+      username,
+      userId: user.id,
+      reason: 'invalid_password',
+    });
     throw new AppError(401, 'Credenciais inválidas.');
   }
 
@@ -220,7 +225,10 @@ function hashRefreshToken(rawToken: string): string {
   return createHash('sha256').update(rawToken).digest('hex');
 }
 
-async function createRefreshTokenRecord(userId: number, familyId: string): Promise<IssuedRefreshToken> {
+async function createRefreshTokenRecord(
+  userId: number,
+  familyId: string,
+): Promise<IssuedRefreshToken> {
   const raw = randomBytes(REFRESH_TOKEN_BYTES).toString('hex');
   const expiresAt = new Date(Date.now() + ms(env.REFRESH_TOKEN_EXPIRES_IN as ms.StringValue));
 
@@ -326,7 +334,10 @@ async function temSucessorVivo(familyId: string): Promise<boolean> {
 // pra emitir um access token novo. Detecta reuso: um token revogado há mais tempo que a
 // janela de graça sendo apresentado de novo é sinal de token roubado — revoga a família
 // inteira, forçando login de novo em todos os dispositivos daquela sessão.
-export async function rotateRefreshToken(rawToken: string, context: SecurityContext = {}): Promise<RotatedSession> {
+export async function rotateRefreshToken(
+  rawToken: string,
+  context: SecurityContext = {},
+): Promise<RotatedSession> {
   const tokenHash = hashRefreshToken(rawToken);
   const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
@@ -379,7 +390,10 @@ export async function rotateRefreshToken(rawToken: string, context: SecurityCont
   // rotacionado empurraria o fim da janela de graça pra frente a cada reapresentação —
   // um token roubado ficaria válido indefinidamente enquanto fosse usado a cada 10s.
   if (!existing.revokedAt) {
-    await prisma.refreshToken.update({ where: { id: existing.id }, data: { revokedAt: new Date() } });
+    await prisma.refreshToken.update({
+      where: { id: existing.id },
+      data: { revokedAt: new Date() },
+    });
   }
 
   const user = await getUserById(existing.userId);

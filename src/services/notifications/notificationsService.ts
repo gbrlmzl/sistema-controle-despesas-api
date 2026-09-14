@@ -15,7 +15,13 @@ interface NewNotification {
 //RN-037 -> Ponto único de publicação. Qualquer área do sistema cria notificação por
 //aqui, já resolvendo o texto e o destino, para que a leitura não precise conhecer as
 //regras de cada tipo.
-export async function createNotification({ userId, type, title, message, linkTo }: NewNotification) {
+export async function createNotification({
+  userId,
+  type,
+  title,
+  message,
+  linkTo,
+}: NewNotification) {
   return prisma.notification.create({
     data: { userId, type, title, message, linkTo: linkTo ?? null },
   });

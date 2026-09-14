@@ -57,7 +57,10 @@ export interface SecurityContext {
   ip?: string;
 }
 
-export function logSecurityEvent(event: SecurityEventName, details: Record<string, unknown> = {}): void {
+export function logSecurityEvent(
+  event: SecurityEventName,
+  details: Record<string, unknown> = {},
+): void {
   // Mesma razão do morgan em app.ts: a suíte de integração erra senha e estoura limite
   // dezenas de vezes de propósito, e cada evento vira um bloco de console no relatório
   // do Jest. Quem precisa observar o log de verdade muta env.NODE_ENV (ver

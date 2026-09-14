@@ -14,7 +14,10 @@ export function createFakeStorage(): FakeStorage {
 
   return {
     async createUploadTicket({ key, contentType }) {
-      return { url: 'https://fake-bucket.example.com', fields: { key, 'Content-Type': contentType } };
+      return {
+        url: 'https://fake-bucket.example.com',
+        fields: { key, 'Content-Type': contentType },
+      };
     },
     async headObject(key) {
       const obj = objects.get(key);
@@ -41,7 +44,11 @@ export function createFakeStorage(): FakeStorage {
 export const VALID_SIGNATURE_BYTES: Record<string, Buffer> = {
   'image/jpeg': Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]),
   'image/png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
-  'image/webp': Buffer.concat([Buffer.from('RIFF', 'ascii'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBP', 'ascii')]),
+  'image/webp': Buffer.concat([
+    Buffer.from('RIFF', 'ascii'),
+    Buffer.from([0, 0, 0, 0]),
+    Buffer.from('WEBP', 'ascii'),
+  ]),
   'application/pdf': Buffer.from('%PDF-1.7....', 'ascii'),
 };
 

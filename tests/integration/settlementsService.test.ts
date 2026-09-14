@@ -2,14 +2,18 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import app from '../../src/app.js';
 import prisma from '../../src/config/prisma.js';
-import { AppError } from '../../src/utils/AppError.js';
 import { setStorageForTests } from '../../src/lib/storage.js';
-import { createFakeStorage, VALID_SIGNATURE_BYTES, INVALID_SIGNATURE_BYTES } from '../helpers/fakeStorage.js';
 import {
-  createReceiptIntent,
   completeReceipt,
   confirmReceived,
+  createReceiptIntent,
 } from '../../src/services/payments/settlementsService.js';
+import { AppError } from '../../src/utils/AppError.js';
+import {
+  createFakeStorage,
+  INVALID_SIGNATURE_BYTES,
+  VALID_SIGNATURE_BYTES,
+} from '../helpers/fakeStorage.js';
 
 // Fase 4 do plano de acertos -> testado contra o banco de verdade, chamando o
 // service diretamente (as rotas HTTP só existem a partir da Fase 5), no mesmo
@@ -41,7 +45,11 @@ async function registerUser(name: string): Promise<RegisteredUser> {
   return { agent, id: response.body.user.id, name, username };
 }
 
-async function addMemberToResidence(owner: RegisteredUser, code: string, memberName: string): Promise<RegisteredUser> {
+async function addMemberToResidence(
+  owner: RegisteredUser,
+  code: string,
+  memberName: string,
+): Promise<RegisteredUser> {
   const member = await registerUser(memberName);
   await member.agent.post('/residences/join-requests').send({ code });
 
@@ -70,7 +78,9 @@ async function expectStatusCode(promise: Promise<unknown>, statusCode: number): 
 }
 
 afterAll(async () => {
-  await prisma.residence.deleteMany({ where: { owner: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } } });
+  await prisma.residence.deleteMany({
+    where: { owner: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } },
+  });
   await prisma.user.deleteMany({ where: { email: { endsWith: `@${TEST_EMAIL_DOMAIN}` } } });
   await prisma.$disconnect();
 });
@@ -106,11 +116,19 @@ describe('fluxo completo de liquidação de um par (D-30/RN-074/075/076/084)', (
       .post(`/residences/${code}/expenses`)
       .send({ name: 'Internet', valueInCents: 100, category: 'ASSINATURAS', isRecurring: false });
 
-    await owner.agent.post(`/residences/${code}/expenses/month-closures`).send({ month: currentMonth, year: currentYear });
+    await owner.agent
+      .post(`/residences/${code}/expenses/month-closures`)
+      .send({ month: currentMonth, year: currentYear });
 
     const residence = await prisma.residence.findUnique({ where: { code }, select: { id: true } });
     const closure = await prisma.monthClosure.findUnique({
-      where: { residenceId_year_month: { residenceId: residence!.id, year: currentYear, month: currentMonth } },
+      where: {
+        residenceId_year_month: {
+          residenceId: residence!.id,
+          year: currentYear,
+          month: currentMonth,
+        },
+      },
       select: { id: true },
     });
     const settlements = await prisma.settlement.findMany({ where: { closureId: closure!.id } });
@@ -140,9 +158,19 @@ describe('fluxo completo de liquidação de um par (D-30/RN-074/075/076/084)', (
       sizeInBytes: VALID_SIGNATURE_BYTES['image/jpeg']!.length,
       originalName: 'comprovante.jpg',
     });
-    fakeStorage.simulateUpload(intent.upload.fields.key!, VALID_SIGNATURE_BYTES['image/jpeg']!, 'image/jpeg');
+    fakeStorage.simulateUpload(
+      intent.upload.fields.key!,
+      VALID_SIGNATURE_BYTES['image/jpeg']!,
+      'image/jpeg',
+    );
 
-    const result = await completeReceipt(code, owner.id, period, settlementOwnerId, intent.receiptId);
+    const result = await completeReceipt(
+      code,
+      owner.id,
+      period,
+      settlementOwnerId,
+      intent.receiptId,
+    );
 
     expect(result.settlement.status).toBe('AWAITING_CONFIRMATION');
     expect(result.settlement.paidAt).not.toBeNull();
@@ -151,18 +179,24 @@ describe('fluxo completo de liquidação de um par (D-30/RN-074/075/076/084)', (
 
     // RN-084: C só é avisada quando TODOS os pares em que é credora tiverem
     // paidAt — só o par do owner completou, o do memberB ainda não.
-    const readyNotifications = await prisma.notification.count({ where: { userId: memberC.id, type: 'SETTLEMENT_READY' } });
+    const readyNotifications = await prisma.notification.count({
+      where: { userId: memberC.id, type: 'SETTLEMENT_READY' },
+    });
     expect(readyNotifications).toBe(0);
   });
 
   it('completar o mesmo comprovante de novo devolve 200 idempotente, sem duplicar nada', async () => {
-    const receipt = await prisma.paymentReceipt.findFirstOrThrow({ where: { settlementId: settlementOwnerId } });
+    const receipt = await prisma.paymentReceipt.findFirstOrThrow({
+      where: { settlementId: settlementOwnerId },
+    });
 
     const result = await completeReceipt(code, owner.id, period, settlementOwnerId, receipt.id);
     expect(result.receipt.id).toBe(receipt.id);
     expect(result.settlement.status).toBe('AWAITING_CONFIRMATION');
 
-    const receiptsForSettlement = await prisma.paymentReceipt.count({ where: { settlementId: settlementOwnerId } });
+    const receiptsForSettlement = await prisma.paymentReceipt.count({
+      where: { settlementId: settlementOwnerId },
+    });
     expect(receiptsForSettlement).toBe(1);
   });
 
@@ -180,7 +214,11 @@ describe('fluxo completo de liquidação de um par (D-30/RN-074/075/076/084)', (
       contentType: 'image/webp',
       sizeInBytes: VALID_SIGNATURE_BYTES['image/webp']!.length,
     });
-    fakeStorage.simulateUpload(intent.upload.fields.key!, VALID_SIGNATURE_BYTES['image/webp']!, 'image/webp');
+    fakeStorage.simulateUpload(
+      intent.upload.fields.key!,
+      VALID_SIGNATURE_BYTES['image/webp']!,
+      'image/webp',
+    );
 
     const result = await completeReceipt(code, memberB.id, period, settlementBId, intent.receiptId);
 
@@ -192,7 +230,9 @@ describe('fluxo completo de liquidação de um par (D-30/RN-074/075/076/084)', (
 
     // Agora SIM: os dois pares em que C é credora têm paidAt -> exatamente 1
     // notificação SETTLEMENT_READY, nunca uma por linha.
-    const readyNotifications = await prisma.notification.count({ where: { userId: memberC.id, type: 'SETTLEMENT_READY' } });
+    const readyNotifications = await prisma.notification.count({
+      where: { userId: memberC.id, type: 'SETTLEMENT_READY' },
+    });
     expect(readyNotifications).toBe(1);
   });
 
@@ -243,14 +283,24 @@ describe('validações independentes de acertos', () => {
       .post(`/residences/${code}/expenses`)
       .send({ name: 'Gás', valueInCents: 100, category: 'DOMESTICAS', isRecurring: false });
 
-    await owner.agent.post(`/residences/${code}/expenses/month-closures`).send({ month: currentMonth, year: currentYear });
+    await owner.agent
+      .post(`/residences/${code}/expenses/month-closures`)
+      .send({ month: currentMonth, year: currentYear });
 
     const residence = await prisma.residence.findUnique({ where: { code }, select: { id: true } });
     const closure = await prisma.monthClosure.findUnique({
-      where: { residenceId_year_month: { residenceId: residence!.id, year: currentYear, month: currentMonth } },
+      where: {
+        residenceId_year_month: {
+          residenceId: residence!.id,
+          year: currentYear,
+          month: currentMonth,
+        },
+      },
       select: { id: true },
     });
-    const settlement = await prisma.settlement.findFirstOrThrow({ where: { closureId: closure!.id } });
+    const settlement = await prisma.settlement.findFirstOrThrow({
+      where: { closureId: closure!.id },
+    });
     settlementId = settlement.id;
     expect(settlement.payerId).toBe(owner.id);
     expect(settlement.receiverId).toBe(memberB.id);
@@ -260,7 +310,10 @@ describe('validações independentes de acertos', () => {
 
   it('o credor da linha tentando anexar comprovante recebe 409 (RN-075)', async () => {
     await expectStatusCode(
-      createReceiptIntent(code, memberB.id, period, settlementId, { contentType: 'image/jpeg', sizeInBytes: 100 }),
+      createReceiptIntent(code, memberB.id, period, settlementId, {
+        contentType: 'image/jpeg',
+        sizeInBytes: 100,
+      }),
       409,
     );
   });
@@ -276,7 +329,10 @@ describe('validações independentes de acertos', () => {
     const anySettlementId = randomUUID();
 
     await expectStatusCode(
-      createReceiptIntent(code, owner.id, openPeriod, anySettlementId, { contentType: 'image/jpeg', sizeInBytes: 100 }),
+      createReceiptIntent(code, owner.id, openPeriod, anySettlementId, {
+        contentType: 'image/jpeg',
+        sizeInBytes: 100,
+      }),
       409,
     );
     await expectStatusCode(confirmReceived(code, memberB.id, openPeriod, anySettlementId), 409);
@@ -289,11 +345,16 @@ describe('validações independentes de acertos', () => {
     });
     fakeStorage.simulateUpload(intent.upload.fields.key!, INVALID_SIGNATURE_BYTES, 'image/jpeg');
 
-    await expectStatusCode(completeReceipt(code, owner.id, period, settlementId, intent.receiptId), 422);
+    await expectStatusCode(
+      completeReceipt(code, owner.id, period, settlementId, intent.receiptId),
+      422,
+    );
 
     const settlement = await prisma.settlement.findUniqueOrThrow({ where: { id: settlementId } });
     expect(settlement.paidAt).toBeNull();
-    const receipt = await prisma.paymentReceipt.findUniqueOrThrow({ where: { id: intent.receiptId } });
+    const receipt = await prisma.paymentReceipt.findUniqueOrThrow({
+      where: { id: intent.receiptId },
+    });
     expect(receipt.status).toBe('PENDING');
   });
 });

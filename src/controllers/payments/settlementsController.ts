@@ -1,15 +1,15 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthUser } from '../../services/auth/authService.js';
-import { AppError } from '../../utils/AppError.js';
-import { parsePeriodParam } from '../../utils/period.js';
 import {
-  getClosureSettlements,
-  createReceiptIntent,
   completeReceipt,
   confirmReceived,
+  createReceiptIntent,
+  getClosureSettlements,
   getReceiptDownloadUrl,
   waiveSettlement,
 } from '../../services/payments/settlementsService.js';
+import { AppError } from '../../utils/AppError.js';
+import { parsePeriodParam } from '../../utils/period.js';
 
 function currentUser(req: Request): AuthUser {
   return req.user as AuthUser;
@@ -39,7 +39,11 @@ function receiptIdParam(req: Request): string {
   return value;
 }
 
-export async function listSettlements(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listSettlements(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const result = await getClosureSettlements(codeParam(req), user.id, parsePeriodParam(req));
@@ -52,14 +56,24 @@ export async function listSettlements(req: Request, res: Response, next: NextFun
 export async function createIntent(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = currentUser(req);
-    const result = await createReceiptIntent(codeParam(req), user.id, parsePeriodParam(req), settlementIdParam(req), req.body);
+    const result = await createReceiptIntent(
+      codeParam(req),
+      user.id,
+      parsePeriodParam(req),
+      settlementIdParam(req),
+      req.body,
+    );
     res.status(201).json(result);
   } catch (err) {
     next(err);
   }
 }
 
-export async function completeUpload(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function completeUpload(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
     const result = await completeReceipt(
@@ -75,10 +89,19 @@ export async function completeUpload(req: Request, res: Response, next: NextFunc
   }
 }
 
-export async function confirmReceivedHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function confirmReceivedHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const user = currentUser(req);
-    const result = await confirmReceived(codeParam(req), user.id, parsePeriodParam(req), settlementIdParam(req));
+    const result = await confirmReceived(
+      codeParam(req),
+      user.id,
+      parsePeriodParam(req),
+      settlementIdParam(req),
+    );
     res.status(200).json(result);
   } catch (err) {
     next(err);
@@ -104,7 +127,12 @@ export async function waive(req: Request, res: Response, next: NextFunction): Pr
 export async function downloadUrl(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = currentUser(req);
-    const result = await getReceiptDownloadUrl(codeParam(req), user.id, parsePeriodParam(req), receiptIdParam(req));
+    const result = await getReceiptDownloadUrl(
+      codeParam(req),
+      user.id,
+      parsePeriodParam(req),
+      receiptIdParam(req),
+    );
     res.status(200).json(result);
   } catch (err) {
     next(err);
