@@ -616,35 +616,41 @@ client novo do Prisma.
 
 ## CI/CD
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml), em sete jobs — o `lint` roda em
-paralelo, e os demais em cadeia:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), em sete jobs — `lint` e `test` rodam em
+paralelo, e o `build` só começa se os dois passarem:
 
 ```mermaid
 flowchart LR
-    L[lint]
-    T[test] --> B["build (matrix: amd64 + arm64)"]
+    L[lint] --> B["build (matrix: amd64 + arm64)"]
+    T[test] --> B
     B --> G[build-gate]
     B --> S[smoke-test] --> P[publish] --> D[dispatch]
 ```
 
 1. **lint** — `npm run lint:ci` (`biome ci` com o reporter do GitHub, que anota os problemas
-   direto nas linhas do PR). É independente dos outros jobs: não bloqueia o build, mas aparece
-   como check próprio.
-2. **test** — sobe um Postgres de serviço, aplica migrations, builda e roda a suíte completa
-   (com `JWT_SECRET` efêmero gerado no próprio job).
-3. **build** — `docker compose --profile prod build` numa **matrix de duas plataformas**,
-   salvando as imagens `api` e `api-migrate` de cada arquitetura como artifact.
+   direto nas linhas do PR). Formatação, ordem dos imports e as regras `recommended` do
+   `biome.json`. Um lint vermelho barra o build e, com ele, a publicação e o deploy.
+2. **test** (check "Testes (unitário + integração)") — sobe um Postgres de serviço, aplica
+   migrations, builda e roda a suíte completa (com `JWT_SECRET` efêmero gerado no próprio job).
+3. **build** — `needs: [lint, test]`. `docker compose --profile prod build` numa **matrix de duas
+   plataformas**, salvando as imagens `api` e `api-migrate` de cada arquitetura como artifact.
 4. **build-gate** — não builda nada: republica o resultado da matrix sob um **nome fixo**, porque
    o nome dos checks de uma matrix carrega a plataforma e muda toda vez que a matrix muda — um
    required status check apontando para lá trava o merge em "waiting for status". Roda com
-   `if: always()`, já que um required check *skipped* conta como aprovado no GitHub.
+   `if: always()`, já que um required check *skipped* conta como aprovado no GitHub. Como o
+   `build` depende do `lint`, um lint vermelho também deixa este gate vermelho.
 5. **smoke-test** — sobe a stack inteira com as imagens recém-construídas e espera `/health`
    responder.
 6. **publish** *(só em `main`)* — publica cada arquitetura numa tag intermediária e monta o
    **manifest multi-arch** com `docker buildx imagetools create`, nas tags `:sha` e `:latest`
    (`docker save`/`load` não preserva manifest list, daí o rodeio).
 7. **dispatch** *(só em `main`)* — avisa o repositório de deploy para rodar o e2e contra
-   aquela tag exata; passando, a imagem é repromovida a `:stable`.
+   aquela tag exata. Passando, a imagem é repromovida a `:stable`, espelhada no ECR e implantada
+   no ECS depois de uma aprovação manual (ver [Deploy](#deploy-o-que-é-automático-e-o-que-não-é)).
+
+> **Ao mexer na branch protection:** o check do job de testes se chama "Testes (unitário +
+> integração)", não mais `test`. Um required check com o nome antigo deixa o PR preso em
+> *Expected — Waiting for status to be reported*. Vale incluir também o "Lint".
 
 **Por que multi-arch, se o deploy é só ARM.** O alvo de produção é Graviton (`linux/arm64`), e
 por um tempo a imagem foi arm64 puro. O problema apareceu do outro lado: o e2e orquestrado roda
@@ -653,9 +659,9 @@ emulada por QEMU — onde o bcrypt do `POST /auth/register` estoura o timeout pa
 suíte falha de forma intermitente. O leg amd64 é nativo no runner; só o arm64 precisa de QEMU.
 
 O CI publica **duas** imagens. A segunda, `…-api-migrate`, é o estágio `build` do Dockerfile
-(toolchain completo) e existe para rodar `prisma migrate deploy` — hoje a migração em produção
-ainda é feita com `containerOverrides` sobre a task da API, e essa imagem é o caminho mais limpo
-para quando existir uma task definition dedicada.
+(toolchain completo) e existe para rodar `prisma migrate deploy`. Ela é promovida e espelhada no
+ECR junto com a API, mas **ainda não é consumida**: em produção a migration roda numa task
+`cronos-migrate` derivada da `cronos-app`, com a imagem da própria API.
 
 ---
 
@@ -731,7 +737,7 @@ Nada aqui é decoração de infraestrutura — são restrições que aparecem no
 | **Limite rígido de memória (448 MiB)** | O documento de arquitetura recomenda limite flexível em quase tudo; a API levou rígido de propósito. Sem ele, um vazamento cresce até o kernel escolher uma vítima — e o OOM killer tende a escolher o **maior** processo, que seria o Postgres. Com o limite, uma API descontrolada morre sozinha |
 | **`GET /health` como health check da task** | E **não** `/ready`. O health check do container responde "reiniciar resolve?"; um `/ready` ali faria uma indisponibilidade do banco reiniciar a API em loop, que é a reação errada |
 | **Graceful shutdown** | `desiredCount=1` com porta fixa no host obriga `minimumHealthyPercent=0`: a task antiga **sai antes** de a nova entrar. O `SIGTERM` tratado em `server.ts` é o que evita matar requisições em voo a cada deploy |
-| **Migração fora do processo que serve tráfego** | Em produção a migration é um `ecs run-task` avulso com `containerOverrides`, mesmo princípio do serviço `migrate` do Compose |
+| **Migração fora do processo que serve tráfego** | Em produção a migration é um `ecs run-task` avulso de `cronos-migrate`: a task definition da API sem `portMappings` e sem health check, com `command` trocado por `prisma migrate deploy`. Mesmo princípio do serviço `migrate` do Compose. Ela roda **antes** do `update-service`, com a versão anterior da API ainda no ar, por isso toda migration precisa ser retrocompatível (*expand/contract*) |
 | **`purge:tokens` como job avulso** | Nunca um `setInterval` dentro da API — que rodaria N vezes se um dia houver N instâncias |
 | **Cookies `secure` em produção** | Implica HTTPS obrigatório de ponta a ponta, o que faz a borda ser requisito, não enfeite |
 | **Proxy same-origin no front** | O navegador nunca fala com esta API direto. Por isso o CORS tem origem única, e a `GOOGLE_CALLBACK_URL` aponta para o **domínio do front**, não para o endereço da API |
@@ -811,37 +817,47 @@ Duas coisas que essa borda cobra deste código:
 ### Deploy: o que é automático e o que não é
 
 ```
-push na main ──▶ CI (test → build → publish GHCR :sha/:latest) ──▶ dispatch
-                                                                     │
-                         repo de deploy: e2e da stack completa ◀──────┘
-                                    │ passou
-                                    ▼
-                             re-tag :stable no GHCR
-                                    │
-                   ─────────────────┼─────────  daqui para baixo é manual
-                                    ▼
-             espelhar :stable → ECR ──▶ run-task da migration ──▶ update-service
+push na main ──▶ CI (lint + test → build → publish GHCR :sha/:latest) ──▶ dispatch
+                                                                            │
+                          repo de deploy: e2e da stack completa ◀───────────┘
+                                     │ passou
+                                     ▼
+                              re-tag :stable no GHCR
+                                     ▼
+                  espelhar :stable → ECR (:sha imutável + :stable)
+                                     │
+                    ─────────────────┼─────────  aprovação manual (environment production)
+                                     ▼
+       task definition nova ──▶ run-task cronos-migrate ──▶ update-service + wait stable
 ```
 
-**Não existe CD para o ECS.** Publicar no GHCR e passar no e2e não coloca nada em produção: o
-espelhamento para o ECR, a migration e o `update-service` são passos manuais. Duas armadilhas
-conhecidas desse trecho:
+**Tudo é automático até o portão de aprovação.** Depois do e2e verde, o repositório de deploy
+promove a imagem, espelha no ECR (por OIDC, sem chave estática) e para o job de deploy em
+*Waiting for review*. Com a aprovação, ele registra uma revisão da `cronos-app` com a tag imutável
+do commit, roda a migration e só então troca o service. Se a migration sair com código diferente de
+zero, o deploy para **antes** do `update-service` e a versão anterior continua no ar; se a revisão
+nova não estabilizar, o circuit breaker volta para a anterior. O detalhamento, com o mapa de erros e o
+rollback, está em
+[`pipeline-ci-cd.md`](https://github.com/gbrlmzl/sistema-controle-despesas-deploy/blob/main/docs/pipeline-ci-cd.md).
 
-- **Espelhar `:stable`, nunca `:latest`.** O `:latest` é publicado **antes** de o e2e rodar; o
-  `:stable` só existe **depois** que ele passa. Espelhar `:latest` manda para produção um artefato
-  que a validação de ponta a ponta ainda não aprovou, e deixa a tag validada sem uso.
-- **O espelhamento não pode achatar a arquitetura.** Um `docker pull` baixa a arquitetura do host
-  que roda o comando; feito de uma máquina x86, manda uma imagem amd64 para uma instância Graviton,
-  que morre com `exec format error`. O caminho correto é `docker buildx imagetools create`, que
-  copia os manifests registry→registry sem escolher plataforma.
+O que isso implica para quem mexe neste código:
 
-Antes de sobrescrever a tag em produção, vale retaguear a imagem que está no ar (`ecr put-image`
-com um `rollback-<data>`): sem tag, ela vira intocável e o rollback deixa de ser um comando.
+- **Merge na `main` com CI verde não é "está no ar".** Falta o e2e, a aprovação e a estabilização
+  do service. E `:stable` quer dizer "aprovado no e2e", não "em produção": um deploy rejeitado ou
+  com falha deixa as duas coisas diferentes.
+- **Migration é executada com a API antiga atendendo tráfego.** Renomear ou remover coluna vira
+  dois deploys (adiciona → migra → só depois remove).
+- **A migration só é testada em banco vazio** (CI e e2e). Uma migration que depende de dados, como
+  `NOT NULL` em tabela populada, só falha no passo de produção.
+
+A tag de SHA na task definition é o que mantém o rollback como um comando só: basta apontar o
+service para a revisão anterior.
 
 ### Pendências de infraestrutura
 
-Estado documentado em **29/08/2026**. O runbook de execução e o retrato mais recente ficam no
-repositório de deploy — confira lá antes de agir sobre qualquer item.
+Estado documentado em **29/08/2026**, com a parte de deploy revista em **14/09/2026**. O runbook de
+execução e o retrato mais recente ficam no repositório de deploy — confira lá antes de agir sobre
+qualquer item.
 
 | Pendência | Impacto |
 | --- | --- |
@@ -850,7 +866,8 @@ repositório de deploy — confira lá antes de agir sobre qualquer item.
 | **Task role sem permissão sobre o bucket** | Sem ela (ou sem credencial explícita), o storage não funciona nem com as variáveis preenchidas |
 | **CORS do bucket sem `GET`** | Quebra só o download de comprovante-imagem |
 | **Amazon SES está fora como provedor SMTP** | Não é preferência: o `env.ts` valida `SMTP_USER` com `z.email()`, e o usuário SMTP do SES é uma credencial `AKIA…`. Resend (`resend`) e SendGrid (`apikey`) caem pelo mesmo motivo. Passam os provedores cujo login é um endereço |
-| **Espelhamento no ECR e `update-service` manuais** | Todo artefato novo exige a sequência acima à mão. Automatizar é o próximo passo do pipeline |
+| **Primeiro deploy automatizado da API não fechou** | Em 14/09 o deploy do merge do Biome falhou no passo de migration (a `cronos-app` publica a porta 8080, ocupada pela API antiga). A correção, a task `cronos-migrate` sem portas, entrou no repositório de deploy no mesmo dia, e o merge do PR #18 dispara o primeiro deploy que já a usa. Até ele estabilizar, a API no ar é a versão anterior e `:stable` está à frente de produção |
+| **Todo deploy derruba a API por alguns segundos** | Porta fixa no host obriga `minimumHealthyPercent=0`. A solução planejada (porta dinâmica + Cloud Map + Caddy como roteador) exige o graceful shutdown que o `server.ts` já tem |
 | **`Caddyfile` e certificados não sobrevivem à troca da instância** | Criados à mão no host, fora do versionamento da task definition — o que também torna o rollback de revisão uma ilusão parcial: a config volta, o arquivo não |
 | **Sem WAF e sem rate limiting na borda** | Decisão de orçamento. O rate limiting da própria API é a única proteção contra abuso de rota |
 
